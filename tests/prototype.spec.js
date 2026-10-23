@@ -109,17 +109,65 @@ test("create an original character and edit the profile", async ({
     .click();
   await page.getByLabel("Character name").fill("Luna");
   await page
-    .getByLabel("A little introduction")
+    .getByLabel("Bio", { exact: true })
     .fill("A friend among the stars.");
-  await page.getByRole("button", { name: "A little more personality" }).click();
   await page
-    .getByLabel("Personality & backstory")
+    .getByLabel("Description", { exact: true })
     .fill("An astronomer searching for a new constellation.");
   await page
-    .getByLabel("Their first message")
+    .getByLabel("First message", { exact: false })
     .fill("The stars are bright tonight. Will you join me?");
-  await page.getByRole("button", { name: "Bring them to life" }).click();
+  await page
+    .getByLabel("Personality", { exact: true })
+    .fill("Gentle, observant, and quietly adventurous.");
+  await page
+    .getByLabel("Scenario", { exact: true })
+    .fill("You meet at an observatory above the clouds.");
+  await page.getByRole("textbox", { name: "Add a tag" }).fill("Astronomy");
+  await page.getByRole("textbox", { name: "Add a tag" }).press("Enter");
+  await page
+    .getByRole("textbox", { name: "Example 1 user message", exact: true })
+    .fill("What are you looking for?");
+  await page
+    .getByRole("textbox", { name: "Example 1 character message", exact: true })
+    .fill('*She smiles.* "Something no one has ever seen."');
+  await page
+    .getByRole("button", { name: "Save character", exact: true })
+    .first()
+    .click();
   await expect(page.getByRole("dialog")).toContainText("Luna");
+  const created = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("chatter-characters"))[0],
+  );
+  expect(created.personality).toContain("Gentle");
+  expect(created.scenario).toContain("observatory");
+  expect(created.tags).toContain("Astronomy");
+  expect(created.examples[0].character).toContain("Something no one");
+  await page
+    .getByRole("button", { name: "Edit character", exact: true })
+    .click();
+  await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
+    created.description,
+  );
+  await expect(page.getByLabel("Personality", { exact: true })).toHaveValue(
+    created.personality,
+  );
+  await expect(
+    page.getByRole("textbox", {
+      name: "Example 1 character message",
+      exact: true,
+    }),
+  ).toHaveValue(created.examples[0].character);
+  await page
+    .getByLabel("Bio", { exact: true })
+    .fill("A new chapter among the stars.");
+  await page
+    .getByRole("button", { name: "Save changes", exact: true })
+    .first()
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "A new chapter among the stars.",
+  );
   await page
     .getByRole("button", { name: "Start chatting", exact: true })
     .click();
@@ -143,4 +191,279 @@ test("create an original character and edit the profile", async ({
     .getByRole("button", { name: "Profile", exact: true })
     .click();
   await expect(page.getByRole("heading", { name: "River." })).toBeVisible();
+});
+
+test("appearance changes update real chat formatting and persist", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Step into the story" }).click();
+  await page.getByTitle("Chat settings").click();
+  await page.getByRole("tab", { name: "Appearance", exact: true }).click();
+  await page
+    .getByLabel("Asterisk action color", { exact: true })
+    .fill("#ff9966");
+  await page
+    .getByLabel("Quotation dialogue color", { exact: true })
+    .fill("#99aaff");
+  await page.getByLabel("Regular text color", { exact: true }).fill("#eeeeee");
+  await page.getByLabel("Chat font", { exact: true }).selectOption("serif");
+  await page
+    .getByRole("switch", { name: "Bold quoted dialogue", exact: true })
+    .check();
+  await page
+    .getByRole("switch", { name: "Show asterisk markers", exact: true })
+    .check();
+  await expect(page.locator(".messages .msg-action").first()).toHaveCSS(
+    "color",
+    "rgb(255, 153, 102)",
+  );
+  await expect(page.locator(".messages .msg-dialogue").first()).toHaveCSS(
+    "color",
+    "rgb(153, 170, 255)",
+  );
+  await expect(page.locator(".messages .msg-dialogue").first()).toHaveCSS(
+    "font-weight",
+    "600",
+  );
+  await expect(page.locator(".messages .formatted-message").first()).toHaveCSS(
+    "font-family",
+    "Georgia, serif",
+  );
+  await expect(page.locator(".messages .msg-action").first()).toContainText(
+    "*",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Step into the story" }).click();
+  await expect(page.locator(".messages .msg-action").first()).toHaveCSS(
+    "color",
+    "rgb(255, 153, 102)",
+  );
+  await page.getByTitle("Chat settings").click();
+  await page.getByRole("tab", { name: "Appearance", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Reset appearance", exact: true })
+    .click();
+  await expect(page.locator(".messages .msg-action").first()).toHaveCSS(
+    "color",
+    "rgb(159, 197, 169)",
+  );
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Chat settings panel", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("API drafts validate honestly and never persist a key", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Step into the story" }).click();
+  await page.getByTitle("Chat settings").click();
+  await page.getByRole("tab", { name: "API", exact: true }).click();
+  await expect(page.getByText("Demo replies are active")).toBeVisible();
+  await page.getByLabel("Provider", { exact: true }).selectOption("custom");
+  await page
+    .getByLabel("API base URL", { exact: true })
+    .fill("http://example.com/v1");
+  await page.getByLabel("Model ID", { exact: true }).fill("my-model");
+  const fakeKey = "prototype-test-key-not-a-real-credential";
+  await page.getByLabel("API key", { exact: true }).fill(fakeKey);
+  await page
+    .getByRole("button", { name: "Validate configuration", exact: true })
+    .click();
+  await expect(page.locator(".configuration-result")).toContainText("HTTPS");
+  await page
+    .getByLabel("API base URL", { exact: true })
+    .fill("https://example.com/v1");
+  await page
+    .getByRole("button", { name: "Validate configuration", exact: true })
+    .click();
+  await expect(page.locator(".configuration-result")).toContainText(
+    "No API request was sent",
+  );
+  expect(
+    await page.evaluate(() => Object.values(localStorage).join(" ")),
+  ).not.toContain(fakeKey);
+  await page.reload();
+  await page.getByRole("button", { name: "Step into the story" }).click();
+  await page.getByTitle("Chat settings").click();
+  await page.getByRole("tab", { name: "API", exact: true }).click();
+  await expect(page.getByLabel("API base URL", { exact: true })).toHaveValue(
+    "https://example.com/v1",
+  );
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
+});
+
+test("character drafts survive navigation and remix preserves original characters", async ({
+  page,
+  isMobile,
+}) => {
+  await nav(page, isMobile)
+    .getByRole("button", {
+      name: isMobile ? "Create" : "Create character",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByLabel("Character name", { exact: false })
+    .fill("Unfinished Star");
+  await page
+    .getByLabel("Personality", { exact: true })
+    .fill("Curious but easily distracted.");
+  await page
+    .getByRole("button", { name: "Back to exploring", exact: true })
+    .click();
+  await nav(page, isMobile)
+    .getByRole("button", {
+      name: isMobile ? "Create" : "Create character",
+      exact: true,
+    })
+    .click();
+  await expect(page.getByLabel("Character name", { exact: false })).toHaveValue(
+    "Unfinished Star",
+  );
+  await expect(page.getByLabel("Personality", { exact: true })).toHaveValue(
+    "Curious but easily distracted.",
+  );
+  if (isMobile) {
+    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "Live character preview" }),
+    ).toContainText("Unfinished Star");
+    await page.keyboard.press("Escape");
+  }
+  await page
+    .getByRole("button", { name: "Back to exploring", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "View Seraphine", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Remix character", exact: true })
+    .click();
+  await expect(page.getByLabel("Character name", { exact: false })).toHaveValue(
+    "Seraphine",
+  );
+  await page
+    .getByLabel("Character name", { exact: false })
+    .fill("Seraphine, reimagined");
+  await page
+    .getByRole("button", { name: "Save character", exact: true })
+    .first()
+    .click();
+  await expect(page.getByRole("dialog")).toContainText("Seraphine, reimagined");
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await nav(page, isMobile)
+    .getByRole("button", { name: "Home", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "View Seraphine", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "View Seraphine, reimagined",
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
+test("older characters and preferences keep their data when edited", async ({
+  page,
+  isMobile,
+}) => {
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "chatter-characters",
+      JSON.stringify([
+        {
+          id: "legacy-character",
+          name: "An Old Friend",
+          tagline: "An older saved bio.",
+          description: "An older character definition.",
+          greeting: '"Welcome back."',
+          tags: ["Fantasy"],
+          art: 0,
+          creator: "alex",
+          chats: "0",
+        },
+      ]),
+    );
+    localStorage.setItem(
+      "chatter-sessions",
+      JSON.stringify({
+        "legacy-character": {
+          updated: 1,
+          messages: [
+            { role: "assistant", text: '"Welcome back."' },
+            { role: "user", text: "This conversation must survive." },
+          ],
+        },
+      }),
+    );
+    localStorage.setItem(
+      "chatter-preferences",
+      JSON.stringify({
+        temperature: 0.6,
+        style: "Balanced",
+        prompt: "Keep my original instructions.",
+        memory: true,
+      }),
+    );
+  });
+  await page.reload();
+  await nav(page, isMobile)
+    .getByRole("button", { name: "Profile", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Edit An Old Friend", exact: true })
+    .click();
+  await expect(page.getByLabel("Bio", { exact: true })).toHaveValue(
+    "An older saved bio.",
+  );
+  await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
+    "An older character definition.",
+  );
+  await page
+    .getByLabel("Personality", { exact: true })
+    .fill("Warm and reassuring.");
+  await page
+    .getByRole("button", { name: "Save changes", exact: true })
+    .first()
+    .click();
+  const stored = await page.evaluate(() => ({
+    characters: JSON.parse(localStorage.getItem("chatter-characters")),
+    sessions: JSON.parse(localStorage.getItem("chatter-sessions")),
+  }));
+  expect(stored.characters).toHaveLength(1);
+  expect(stored.characters[0].id).toBe("legacy-character");
+  expect(stored.sessions["legacy-character"].messages[1].text).toBe(
+    "This conversation must survive.",
+  );
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await nav(page, isMobile)
+    .getByRole("button", { name: "Home", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Step into the story" }).click();
+  await page.getByTitle("Chat settings").click();
+  await expect(
+    page.getByLabel("System instructions", { exact: true }),
+  ).toHaveValue("Keep my original instructions.");
+  const output = page.getByRole("slider", { name: /Maximum response/ });
+  await output.press("End");
+  await expect(output).toHaveValue("4096");
+  await page.getByRole("slider", { name: /Context window/ }).press("Home");
+  await expect(output).toHaveValue("2048");
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem("chatter-preferences")).contextSize,
+    ),
+  ).toBe(2048);
+  await page
+    .getByRole("button", { name: "Reset generation parameters", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("System instructions", { exact: true }),
+  ).toHaveValue("Keep my original instructions.");
+  await expect(
+    page.getByRole("slider", { name: /Context window/ }),
+  ).toHaveValue("2048");
 });

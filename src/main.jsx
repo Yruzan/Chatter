@@ -37,6 +37,22 @@ import "@fontsource/manrope/latin-600.css";
 import "@fontsource/manrope/latin-700.css";
 import "@fontsource/manrope/latin-800.css";
 import "./styles.css";
+import "./studio.css";
+import ChatSettings from "./components/ChatSettings";
+import CharacterEditor from "./components/CharacterEditor";
+import FormattedMessage from "./components/FormattedMessage";
+import {
+  defaultParameters,
+  defaultAppearance,
+  defaultApi,
+  appearanceStyle,
+} from "./settings";
+
+function fillPlaceholders(text, character, user) {
+  return (text || "")
+    .replaceAll("{{char}}", character.name)
+    .replaceAll("{{user}}", user.name);
+}
 
 const initialCharacters = [
   {
@@ -229,7 +245,8 @@ function App() {
     [query, setQuery] = useState(""),
     [category, setCategory] = useState("For you"),
     [detail, setDetail] = useState(null),
-    [create, setCreate] = useState(false),
+    [editor, setEditor] = useState(null),
+    [apiKey, setApiKey] = useState(""),
     [activeChat, setActiveChat] = useState(null),
     [settings, setSettings] = useState(false),
     [toast, setToast] = useState(""),
@@ -246,12 +263,24 @@ function App() {
       bio: "Collecting little moments & new worlds.",
     }),
     [sessions, setSessions] = useSaved("chatter-sessions", {}),
-    [preferences, setPreferences] = useSaved("chatter-preferences", {
-      temperature: 0.8,
-      style: "Balanced",
-      prompt: "Stay in character. Write expressive, thoughtful responses.",
-      memory: true,
-    });
+    [preferences, setPreferences] = useSaved(
+      "chatter-preferences",
+      defaultParameters,
+    ),
+    [savedAppearance, setAppearance] = useSaved(
+      "chatter-appearance",
+      defaultAppearance,
+    ),
+    [savedApi, setApi] = useSaved("chatter-api", defaultApi);
+  const parameters = { ...defaultParameters, ...preferences };
+  const appearance = { ...defaultAppearance, ...savedAppearance };
+  const api = { ...defaultApi, ...savedApi };
+  const setParameters = (update) =>
+    setPreferences((prev) =>
+      typeof update === "function"
+        ? update({ ...defaultParameters, ...prev })
+        : update,
+    );
   const characters = [...initialCharacters, ...custom];
   const recentIds = Object.keys(sessions).sort(
     (a, b) => (sessions[b].updated ?? 0) - (sessions[a].updated ?? 0),
@@ -266,6 +295,7 @@ function App() {
   };
   const navigate = (p) => {
     setPage(p);
+    setEditor(null);
     setActiveChat(null);
     setQuery("");
     setCategory("For you");
@@ -279,7 +309,12 @@ function App() {
       setSessions((s) => ({
         ...s,
         [c.id]: {
-          messages: [{ role: "assistant", text: c.greeting }],
+          messages: [
+            {
+              role: "assistant",
+              text: fillPlaceholders(c.greeting, c, profile),
+            },
+          ],
           updated: Date.now(),
         },
       }));
@@ -288,21 +323,49 @@ function App() {
     setDetail(null);
     setSettings(false);
   };
+  const openEditor = (character = null, remix = false) => {
+    setEditor({ character, remix, returnPage: page, returnChat: activeChat });
+    setDetail(null);
+    setSettings(false);
+    setActiveChat(null);
+    setPage("Create");
+    window.scrollTo({ top: 0 });
+  };
+  const closeEditor = () => {
+    setPage(
+      editor?.returnPage === "Create" ? "Home" : editor?.returnPage || "Home",
+    );
+    setActiveChat(editor?.returnChat || null);
+    setEditor(null);
+  };
   const saveCharacter = (data) => {
+    const existing =
+      editor?.character && !editor.remix ? editor.character : null;
     const c = {
       ...data,
-      id: `custom-${Date.now()}`,
-      creator: profile.name.toLowerCase(),
-      chats: "0",
-      tags: [data.genre, "Original"],
-      description: data.description,
-      tagline: data.tagline || "A new story is waiting.",
-      color: "#8cdfbf",
+      id:
+        existing?.id ||
+        `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      creator: existing?.creator || profile.name.toLowerCase(),
+      chats: existing?.chats || "0",
+      tags: data.tags.length ? data.tags : ["Original"],
+      tagline: data.bio || "A new story is waiting.",
+      color: existing?.color || "#8cdfbf",
     };
-    setCustom((prev) => [...prev, c]);
-    setCreate(false);
+    setCustom((prev) =>
+      existing
+        ? prev.map((char) => (char.id === existing.id ? c : char))
+        : [...prev, c],
+    );
+    setEditor(null);
+    setPage("Profile");
     setDetail(c);
-    alert("Your character is ready to meet the world.");
+    alert(
+      existing
+        ? "Character updated. Existing conversations are preserved."
+        : "Your character is ready to meet the world.",
+    );
+    window.scrollTo({ top: 0 });
   };
   const filtered = characters.filter(
     (c) =>
@@ -315,7 +378,9 @@ function App() {
         favorites.includes(c.id)),
   );
   return (
-    <div className={`app ${current ? "in-chat" : ""}`}>
+    <div
+      className={`app ${current ? "in-chat" : ""} ${editor ? "in-editor" : ""}`}
+    >
       <aside className="sidebar">
         <button
           className="brand-button"
@@ -337,7 +402,7 @@ function App() {
               key={label}
               className={`nav-item ${page === label ? "active" : ""} ${label === "Create" ? "create-nav" : ""}`}
               onClick={() =>
-                label === "Create" ? setCreate(true) : navigate(label)
+                label === "Create" ? openEditor() : navigate(label)
               }
             >
               <span className="nav-icon">
@@ -391,7 +456,7 @@ function App() {
               <strong>Bring them to life.</strong>
             </p>
             <button
-              onClick={() => setCreate(true)}
+              onClick={() => openEditor()}
               aria-label="Create your character"
             >
               <ArrowUpRight size={19} />
@@ -467,7 +532,10 @@ function App() {
         </header>
         {current ? (
           <div className="chat-layout">
-            <section className="conversation">
+            <section
+              className={`conversation ${appearance.bubbles ? "" : "unboxed-messages"}`}
+              style={appearanceStyle(appearance)}
+            >
               <header className="conversation-header">
                 <button
                   className="icon-button mobile-back"
@@ -511,109 +579,57 @@ function App() {
                 setSessions={setSessions}
                 profile={profile}
                 alert={alert}
+                appearance={appearance}
               />
             </section>
             {settings && (
-              <aside className="chat-settings">
-                <div className="settings-heading">
-                  <h3>Make it your story</h3>
-                  <button
-                    className="icon-button"
-                    onClick={() => setSettings(false)}
-                    aria-label="Close settings"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-                <p className="muted">
-                  A few little details. A different kind of conversation.
-                </p>
-                <label className="settings-label">Response style</label>
-                <div className="style-options">
-                  {["Creative", "Balanced", "Precise"].map((style) => (
-                    <button
-                      className={preferences.style === style ? "selected" : ""}
-                      key={style}
-                      onClick={() => setPreferences((p) => ({ ...p, style }))}
-                    >
-                      {style}
-                    </button>
-                  ))}
-                </div>
-                <label className="settings-label" htmlFor="temperature">
-                  Creativity <span>{preferences.temperature}</span>
-                </label>
-                <input
-                  id="temperature"
-                  type="range"
-                  min="0"
-                  max="1.5"
-                  step="0.1"
-                  value={preferences.temperature}
-                  onChange={(e) =>
-                    setPreferences((p) => ({
-                      ...p,
-                      temperature: Number(e.target.value),
-                    }))
-                  }
-                />
-                <small className="muted">
-                  From familiar paths to unexpected turns.
-                </small>
-                <label className="settings-label" htmlFor="prompt">
-                  Character instructions
-                </label>
-                <textarea
-                  id="prompt"
-                  value={preferences.prompt}
-                  onChange={(e) =>
-                    setPreferences((p) => ({ ...p, prompt: e.target.value }))
-                  }
-                />
-                <label className="toggle-row">
-                  <span>
-                    Remember the story<small>Keep context between visits</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={preferences.memory}
-                    onChange={(e) =>
-                      setPreferences((p) => ({
-                        ...p,
-                        memory: e.target.checked,
-                      }))
-                    }
-                  />
-                </label>
-                <div className="settings-note">
-                  <Sparkles size={18} />
-                  <p>
-                    These settings are saved for your design preview. Live AI
-                    comes in the next chapter.
-                  </p>
-                </div>
-                <button
-                  className="text-button danger"
-                  onClick={() => {
-                    setSessions((s) => ({
-                      ...s,
-                      [current.id]: {
-                        messages: [
-                          { role: "assistant", text: current.greeting },
-                        ],
-                        updated: Date.now(),
-                      },
-                    }));
-                    alert("A fresh chapter. Conversation reset.");
-                  }}
-                >
-                  <RefreshCw size={15} /> Start a fresh conversation
-                </button>
-              </aside>
+              <ChatSettings
+                parameters={parameters}
+                setParameters={setParameters}
+                appearance={appearance}
+                setAppearance={setAppearance}
+                api={api}
+                setApi={setApi}
+                apiKey={apiKey}
+                setApiKey={setApiKey}
+                character={current}
+                onClose={() => setSettings(false)}
+                onReset={() => {
+                  setSessions((s) => ({
+                    ...s,
+                    [current.id]: {
+                      messages: [
+                        {
+                          role: "assistant",
+                          text: fillPlaceholders(
+                            current.greeting,
+                            current,
+                            profile,
+                          ),
+                        },
+                      ],
+                      updated: Date.now(),
+                    },
+                  }));
+                  alert("A fresh chapter. Conversation reset.");
+                }}
+              />
             )}
           </div>
         ) : (
-          <main className="content">
+          <main className={`content ${editor ? "editor-content" : ""}`}>
+            {editor && (
+              <CharacterEditor
+                key={`${editor.character?.id || "new"}-${editor.remix ? "remix" : "edit"}`}
+                character={editor.character}
+                remix={editor.remix}
+                portraits={initialCharacters}
+                Art={Art}
+                appearance={appearance}
+                onSave={saveCharacter}
+                onClose={closeEditor}
+              />
+            )}
             {page === "Home" && (
               <>
                 <div className="welcome-row">
@@ -1011,10 +1027,7 @@ function App() {
                   <h2>
                     Made by you <span className="heading-dot" />
                   </h2>
-                  <button
-                    className="text-button"
-                    onClick={() => setCreate(true)}
-                  >
+                  <button className="text-button" onClick={() => openEditor()}>
                     <Plus size={16} /> Create character
                   </button>
                 </div>
@@ -1038,6 +1051,13 @@ function App() {
                             <p>{c.tagline}</p>
                           </div>
                         </button>
+                        <button
+                          className="profile-character-edit"
+                          aria-label={`Edit ${c.name}`}
+                          onClick={() => openEditor(c)}
+                        >
+                          <Pencil size={14} /> Edit character
+                        </button>
                       </article>
                     ))}
                   </div>
@@ -1056,7 +1076,7 @@ function App() {
                     </p>
                     <button
                       className="button primary"
-                      onClick={() => setCreate(true)}
+                      onClick={() => openEditor()}
                     >
                       <Plus size={17} /> Create your first character
                     </button>
@@ -1086,7 +1106,7 @@ function App() {
             className={`${page === label ? "active" : ""} ${label === "Create" ? "mobile-create" : ""}`}
             key={label}
             onClick={() =>
-              label === "Create" ? setCreate(true) : navigate(label)
+              label === "Create" ? openEditor() : navigate(label)
             }
           >
             <span>
@@ -1128,11 +1148,24 @@ function App() {
                 <span key={t}>{t}</span>
               ))}
             </div>
-            <p className="detail-description">{detail.description}</p>
+            <p className="detail-description">
+              {detail.bio || detail.description}
+            </p>
             <div className="greeting-preview">
               <span className="eyebrow">THE FIRST HELLO</span>
               <p>{detail.greeting.replace(/\*/g, "")}</p>
             </div>
+            <button
+              className="text-button detail-edit"
+              onClick={() =>
+                openEditor(detail, !custom.some((c) => c.id === detail.id))
+              }
+            >
+              <Pencil size={14} />
+              {custom.some((c) => c.id === detail.id)
+                ? "Edit character"
+                : "Remix character"}
+            </button>
             <div className="detail-actions">
               <button
                 className="button primary"
@@ -1153,9 +1186,6 @@ function App() {
             </div>
           </div>
         </Modal>
-      )}
-      {create && (
-        <CreateModal onClose={() => setCreate(false)} onSave={saveCharacter} />
       )}
       {profileEdit && (
         <Modal
@@ -1205,164 +1235,7 @@ function App() {
     </div>
   );
 }
-function CreateModal({ onClose, onSave }) {
-  const [art, setArt] = useState(0),
-    [step, setStep] = useState(1),
-    [data, setData] = useState({
-      name: "",
-      tagline: "",
-      description: "",
-      genre: "Fantasy",
-      greeting: "",
-    });
-  const update = (e) =>
-    setData((d) => ({ ...d, [e.target.name]: e.target.value }));
-  return (
-    <Modal
-      label="Create a character"
-      onClose={onClose}
-      className="form-modal create-modal"
-    >
-      <span className="eyebrow">
-        <WandSparkles size={14} /> FROM YOUR IMAGINATION
-      </span>
-      <h2>
-        Give a story a soul<span>.</span>
-      </h2>
-      <p className="muted">
-        Every unforgettable character starts with a little spark.
-      </p>
-      <div className="form-steps">
-        <span className={step === 1 ? "active" : ""}>
-          01 <b>The character</b>
-        </span>
-        <i />
-        <span className={step === 2 ? "active" : ""}>
-          02 <b>The first hello</b>
-        </span>
-      </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (step === 1) {
-            if (!data.name.trim()) return;
-            setStep(2);
-          } else
-            onSave({
-              ...data,
-              art,
-              greeting:
-                data.greeting ||
-                `“Hello! I'm ${data.name}. I have a feeling this is the start of something interesting.”`,
-            });
-        }}
-      >
-        {step === 1 ? (
-          <>
-            <label>
-              Choose their look <small>Prototype portraits</small>
-            </label>
-            <div className="avatar-picker">
-              {initialCharacters.map((c) => (
-                <button
-                  type="button"
-                  key={c.id}
-                  className={art === c.art ? "selected" : ""}
-                  onClick={() => setArt(c.art)}
-                  aria-label={`Select ${c.name} portrait`}
-                >
-                  <Art character={c} />
-                  {art === c.art && (
-                    <span>
-                      <Check size={13} />
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-            <label>
-              Character name <span>*</span>
-              <input
-                autoComplete="off"
-                name="name"
-                required
-                maxLength={40}
-                placeholder="What should we call them?"
-                value={data.name}
-                onChange={update}
-              />
-            </label>
-            <label>
-              A little introduction
-              <input
-                name="tagline"
-                maxLength={90}
-                placeholder="A line that makes someone curious…"
-                value={data.tagline}
-                onChange={update}
-              />
-            </label>
-            <label>
-              Their world
-              <select name="genre" value={data.genre} onChange={update}>
-                {categories.slice(1).map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </label>
-            <button className="button primary" type="submit">
-              A little more personality <ArrowRight size={17} />
-            </button>
-          </>
-        ) : (
-          <>
-            <label>
-              Personality & backstory <span>*</span>
-              <textarea
-                required
-                name="description"
-                maxLength={1800}
-                rows={4}
-                value={data.description}
-                onChange={update}
-                placeholder="Who are they? What makes them tick? What world do they live in?"
-              />
-            </label>
-            <label>
-              Their first message <span>*</span>
-              <textarea
-                required
-                name="greeting"
-                maxLength={2000}
-                rows={4}
-                value={data.greeting}
-                onChange={update}
-                placeholder="Set the scene. What do they say when someone says hello?"
-              />
-            </label>
-            <div className="form-note">
-              <Feather size={15} /> Saved privately in this browser for the
-              prototype.
-            </div>
-            <div className="form-actions">
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => setStep(1)}
-              >
-                <ChevronLeft size={17} /> Back
-              </button>
-              <button className="button primary" type="submit">
-                Bring them to life <Sparkles size={17} />
-              </button>
-            </div>
-          </>
-        )}
-      </form>
-    </Modal>
-  );
-}
-function Chat({ character, session, setSessions, profile, alert }) {
+function Chat({ character, session, setSessions, profile, alert, appearance }) {
   const [text, setText] = useState(""),
     [typing, setTyping] = useState(false),
     [attachment, setAttachment] = useState(null);
@@ -1370,7 +1243,10 @@ function Chat({ character, session, setSessions, profile, alert }) {
     timer = useRef(null),
     fileRef = useRef(null);
   const messages = session?.messages || [
-    { role: "assistant", text: character.greeting },
+    {
+      role: "assistant",
+      text: fillPlaceholders(character.greeting, character, profile),
+    },
   ];
   useEffect(() => {
     setText("");
@@ -1466,15 +1342,10 @@ function Chat({ character, session, setSessions, profile, alert }) {
                       alt="Your attachment"
                     />
                   )}
-                  {m.text
-                    .split(/(\*[^*]+\*)/g)
-                    .map((part, j) =>
-                      part.startsWith("*") ? (
-                        <em key={j}>{part.slice(1, -1)}</em>
-                      ) : (
-                        <span key={j}>{part}</span>
-                      ),
-                    )}
+                  <FormattedMessage
+                    text={m.text}
+                    showMarkers={appearance.showMarkers}
+                  />
                 </div>
                 {m.role === "assistant" && (
                   <div className="message-tools">
