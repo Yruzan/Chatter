@@ -14,6 +14,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import FormattedMessage from "./FormattedMessage";
+import PortraitUpload from "./PortraitUpload";
 import { appearanceStyle } from "../settings";
 
 const blank = {
@@ -26,6 +27,7 @@ const blank = {
   examples: [{ user: "", character: "" }],
   tags: [],
   art: 0,
+  portrait: null,
   creatorNotes: "",
 };
 function valuesFrom(character) {
@@ -115,7 +117,8 @@ export default function CharacterEditor({
     [active, setActive] = useState("identity"),
     [showPreview, setShowPreview] = useState(false),
     [errors, setErrors] = useState({}),
-    [draftStatus, setDraftStatus] = useState("");
+    [draftStatus, setDraftStatus] = useState(""),
+    [portraitBusy, setPortraitBusy] = useState(false);
   const heading = useRef(null),
     saved = useRef(false),
     previewRef = useRef(null),
@@ -200,6 +203,7 @@ export default function CharacterEditor({
   );
   function save(e) {
     e.preventDefault();
+    if (portraitBusy) return;
     const nextErrors = {};
     for (const key of ["name", "description", "greeting"])
       if (!data[key].trim())
@@ -234,8 +238,8 @@ export default function CharacterEditor({
         .filter((e) => e.user.trim() && e.character.trim())
         .map((e) => ({ user: e.user.trim(), character: e.character.trim() })),
     };
+    if (onSave(cleaned) === false) return;
     saved.current = true;
-    onSave(cleaned);
     localStorage.removeItem(draftKey);
   }
   function discard() {
@@ -282,6 +286,7 @@ export default function CharacterEditor({
             className="button primary"
             form="character-editor-form"
             type="submit"
+            disabled={portraitBusy}
           >
             <Save size={16} />
             {character && !remix ? "Save changes" : "Save character"}
@@ -355,13 +360,18 @@ export default function CharacterEditor({
                   {portraits.map((c) => (
                     <button
                       type="button"
-                      className={data.art === c.art ? "selected" : ""}
+                      className={
+                        !data.portrait && data.art === c.art ? "selected" : ""
+                      }
                       aria-label={`Select ${c.name} portrait`}
+                      disabled={portraitBusy}
                       key={c.id}
-                      onClick={() => setData((d) => ({ ...d, art: c.art }))}
+                      onClick={() =>
+                        setData((d) => ({ ...d, art: c.art, portrait: null }))
+                      }
                     >
                       <Art character={c} />
-                      {data.art === c.art && (
+                      {!data.portrait && data.art === c.art && (
                         <span>
                           <Check size={11} />
                         </span>
@@ -371,6 +381,13 @@ export default function CharacterEditor({
                 </div>
               </div>
             </div>
+            <PortraitUpload
+              value={data.portrait}
+              onBusyChange={setPortraitBusy}
+              onChange={(portrait) =>
+                setData((previous) => ({ ...previous, portrait }))
+              }
+            />
             <Field
               name="name"
               label="Character name"
@@ -631,7 +648,11 @@ export default function CharacterEditor({
               <span>
                 <ShieldNote /> Saved privately in your browser
               </span>
-              <button type="submit" className="button primary">
+              <button
+                type="submit"
+                className="button primary"
+                disabled={portraitBusy}
+              >
                 <Save size={16} />
                 {character && !remix ? "Save changes" : "Save character"}
               </button>

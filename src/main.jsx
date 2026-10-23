@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Home,
@@ -15,7 +15,7 @@ import {
   MessageCircle,
   Sparkles,
   SlidersHorizontal,
-  MoreHorizontal,
+  Menu,
   Bookmark,
   Bell,
   Check,
@@ -38,6 +38,10 @@ import "@fontsource/manrope/latin-700.css";
 import "@fontsource/manrope/latin-800.css";
 import "./styles.css";
 import "./studio.css";
+import "./navigation.css";
+import Sidebar from "./components/Sidebar";
+import NewChatPicker from "./components/NewChatPicker";
+import { getHistory, historyDay } from "./conversations";
 import ChatSettings from "./components/ChatSettings";
 import CharacterEditor from "./components/CharacterEditor";
 import FormattedMessage from "./components/FormattedMessage";
@@ -157,20 +161,28 @@ function useSaved(key, fallback) {
       return fallback;
     }
   });
-  useEffect(
-    () => localStorage.setItem(key, JSON.stringify(value)),
-    [key, value],
-  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      window.dispatchEvent(new Event("chatter-storage-error"));
+    }
+  }, [key, value]);
   return [value, setValue];
 }
 function Art({ character, className = "", ...props }) {
+  const uploaded = /^data:image\/(png|jpeg|webp);base64,/.test(
+    character.portrait || "",
+  );
   return (
     <div
       role="img"
       aria-label={`${character.name} character illustration`}
-      className={`art art-${character.art ?? 0} ${className}`}
+      className={`art art-${character.art ?? 0} ${uploaded ? "custom-art" : ""} ${className}`}
       {...props}
-    />
+    >
+      {uploaded && <img src={character.portrait} alt="" />}
+    </div>
   );
 }
 function Brand() {
@@ -252,7 +264,9 @@ function App() {
     [toast, setToast] = useState(""),
     [notifications, setNotifications] = useState(false),
     [profileEdit, setProfileEdit] = useState(false),
-    [libraryTab, setLibraryTab] = useState("All characters");
+    [libraryTab, setLibraryTab] = useState("All characters"),
+    [sidebarOpen, setSidebarOpen] = useState(false),
+    [newChatOpen, setNewChatOpen] = useState(false);
   const [custom, setCustom] = useSaved("chatter-characters", []),
     [favorites, setFavorites] = useSaved("chatter-favorites", [
       "seraphine",
@@ -281,20 +295,39 @@ function App() {
         ? update({ ...defaultParameters, ...prev })
         : update,
     );
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const characters = [...initialCharacters, ...custom];
-  const recentIds = Object.keys(sessions).sort(
-    (a, b) => (sessions[b].updated ?? 0) - (sessions[a].updated ?? 0),
+  const history = getHistory(sessions, characters);
+  const recentIds = history.map((item) => item.id);
+  const recent = (
+    history.length
+      ? [
+          ...new Map(
+            history.map((item) => [item.character.id, item.character]),
+          ).values(),
+        ]
+      : initialCharacters.slice(0, 3)
+  ).slice(0, 3);
+  const currentSession = sessions[activeChat];
+  const current = characters.find(
+    (c) => c.id === (currentSession?.characterId || activeChat),
   );
-  const recent = (recentIds.length ? recentIds : ["seraphine", "kael", "mila"])
-    .map((id) => characters.find((c) => c.id === id))
-    .filter(Boolean);
-  const current = characters.find((c) => c.id === activeChat);
   const alert = (message) => {
     setToast(message);
     setTimeout(() => setToast(""), 3200);
   };
+  useEffect(() => {
+    const listener = () =>
+      alert(
+        "Browser storage is full. Recent changes may not survive a refresh.",
+      );
+    window.addEventListener("chatter-storage-error", listener);
+    return () => window.removeEventListener("chatter-storage-error", listener);
+  }, []);
   const navigate = (p) => {
     setPage(p);
+    setSidebarOpen(false);
+    setSettings(false);
     setEditor(null);
     setActiveChat(null);
     setQuery("");
@@ -304,11 +337,29 @@ function App() {
     setFavorites((f) =>
       f.includes(id) ? f.filter((x) => x !== id) : [...f, id],
     );
-  const startChat = (c) => {
-    if (!sessions[c.id])
-      setSessions((s) => ({
-        ...s,
-        [c.id]: {
+  const openConversation = (id) => {
+    setActiveChat(id);
+    setPage("Chats");
+    setEditor(null);
+    setDetail(null);
+    setSettings(false);
+    setSidebarOpen(false);
+    setNewChatOpen(false);
+  };
+  const startChat = (c, options = {}) => {
+    const existing = options.fresh
+      ? null
+      : history.find((item) => item.character.id === c.id);
+    const id =
+      existing?.id ||
+      (!sessions[c.id]
+        ? c.id
+        : `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    if (!existing)
+      setSessions((prev) => ({
+        ...prev,
+        [id]: {
+          characterId: c.id,
           messages: [
             {
               role: "assistant",
@@ -318,12 +369,16 @@ function App() {
           updated: Date.now(),
         },
       }));
-    setActiveChat(c.id);
-    setPage("Chats");
-    setDetail(null);
+    openConversation(id);
+  };
+  const openNewChat = () => {
+    setSidebarOpen(false);
     setSettings(false);
+    setDetail(null);
+    setNewChatOpen(true);
   };
   const openEditor = (character = null, remix = false) => {
+    setSidebarOpen(false);
     setEditor({ character, remix, returnPage: page, returnChat: activeChat });
     setDetail(null);
     setSettings(false);
@@ -352,11 +407,18 @@ function App() {
       tagline: data.bio || "A new story is waiting.",
       color: existing?.color || "#8cdfbf",
     };
-    setCustom((prev) =>
-      existing
-        ? prev.map((char) => (char.id === existing.id ? c : char))
-        : [...prev, c],
-    );
+    const next = existing
+      ? custom.map((char) => (char.id === existing.id ? c : char))
+      : [...custom, c];
+    try {
+      localStorage.setItem("chatter-characters", JSON.stringify(next));
+    } catch {
+      alert(
+        "Not saved: browser storage is full. Remove a few old images or conversations, then try again.",
+      );
+      return false;
+    }
+    setCustom(next);
     setEditor(null);
     setPage("Profile");
     setDetail(c);
@@ -366,6 +428,7 @@ function App() {
         : "Your character is ready to meet the world.",
     );
     window.scrollTo({ top: 0 });
+    return true;
   };
   const filtered = characters.filter(
     (c) =>
@@ -381,102 +444,31 @@ function App() {
     <div
       className={`app ${current ? "in-chat" : ""} ${editor ? "in-editor" : ""}`}
     >
-      <aside className="sidebar">
-        <button
-          className="brand-button"
-          onClick={() => navigate("Home")}
-          aria-label="Chatter home"
-        >
-          <Brand />
-        </button>
-        <div className="workspace-label">YOUR LITTLE UNIVERSE</div>
-        <nav className="main-nav" aria-label="Main navigation">
-          {[
-            [Home, "Home"],
-            [Library, "Library"],
-            [Plus, "Create"],
-            [MessagesSquare, "Chats"],
-            [UserRound, "Profile"],
-          ].map(([Icon, label]) => (
-            <button
-              key={label}
-              className={`nav-item ${page === label ? "active" : ""} ${label === "Create" ? "create-nav" : ""}`}
-              onClick={() =>
-                label === "Create" ? openEditor() : navigate(label)
-              }
-            >
-              <span className="nav-icon">
-                <Icon size={21} />
-              </span>
-              <span>
-                {label === "Chats"
-                  ? "Chats"
-                  : label === "Create"
-                    ? "Create character"
-                    : label}
-              </span>
-              {page === label && <span className="nav-indicator" />}
-              {label === "Chats" && (
-                <span className="nav-count">{recentIds.length || 3}</span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-recent">
-          <div className="section-eyebrow">
-            PICK UP THE STORY <span>↗</span>
-          </div>
-          {recent.slice(0, 3).map((c) => (
-            <button
-              key={c.id}
-              className={`mini-chat ${activeChat === c.id ? "selected" : ""}`}
-              onClick={() => startChat(c)}
-            >
-              <Art character={c} className="avatar" />
-              <span>
-                <strong>{c.name}</strong>
-                <small>
-                  {c.id === "seraphine"
-                    ? "The enchanted forest"
-                    : c.tags[0] + " & a little magic"}
-                </small>
-              </span>
-              <span className="tiny-online" />
-            </button>
-          ))}
-        </div>
-        <div className="sidebar-bottom">
-          <div className="inspiration">
-            <span className="small-spark">
-              <Sparkles size={18} />
-            </span>
-            <p>
-              A character in your mind?
-              <br />
-              <strong>Bring them to life.</strong>
-            </p>
-            <button
-              onClick={() => openEditor()}
-              aria-label="Create your character"
-            >
-              <ArrowUpRight size={19} />
-            </button>
-          </div>
-          <button className="account" onClick={() => navigate("Profile")}>
-            <div className="user-avatar">
-              {profile.name.slice(0, 1).toUpperCase()}
-            </div>
-            <span>
-              <strong>{profile.name}</strong>
-              <small>Your own kind of universe</small>
-            </span>
-            <MoreHorizontal size={19} />
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        Brand={Brand}
+        open={sidebarOpen}
+        onClose={closeSidebar}
+        page={page}
+        history={history}
+        activeChat={activeChat}
+        profile={profile}
+        onNavigate={navigate}
+        onCreate={() => openEditor()}
+        onNewChat={openNewChat}
+        onSelect={openConversation}
+      />
       <div className="main-shell">
         <header className="topbar">
           <div className="topbar-location">
+            <button
+              className="icon-button mobile-menu-toggle"
+              aria-label="Open navigation menu"
+              aria-expanded={sidebarOpen}
+              aria-controls="app-sidebar"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <Menu size={21} />
+            </button>
             <span className="desktop-location">
               {current
                 ? "Your conversations"
@@ -538,6 +530,15 @@ function App() {
             >
               <header className="conversation-header">
                 <button
+                  className="icon-button mobile-menu-toggle"
+                  aria-label="Open navigation menu"
+                  aria-expanded={sidebarOpen}
+                  aria-controls="app-sidebar"
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  <Menu size={21} />
+                </button>
+                <button
                   className="icon-button mobile-back"
                   aria-label="Back to chats"
                   onClick={() => setActiveChat(null)}
@@ -574,8 +575,10 @@ function App() {
                 </div>
               </header>
               <Chat
+                key={`${activeChat}-${currentSession?.revision || 0}`}
                 character={current}
-                session={sessions[current.id]}
+                session={currentSession}
+                sessionId={activeChat}
                 setSessions={setSessions}
                 profile={profile}
                 alert={alert}
@@ -597,7 +600,9 @@ function App() {
                 onReset={() => {
                   setSessions((s) => ({
                     ...s,
-                    [current.id]: {
+                    [activeChat]: {
+                      characterId: current.id,
+                      revision: (s[activeChat]?.revision || 0) + 1,
                       messages: [
                         {
                           role: "assistant",
@@ -741,8 +746,9 @@ function App() {
                             </span>
                           </div>
                           <p>
-                            {sessions[c.id]?.messages
-                              .at(-1)
+                            {history
+                              .find((item) => item.character.id === c.id)
+                              ?.session.messages.at(-1)
                               ?.text.replace(/\*/g, "")
                               .slice(0, 52) ||
                               [
@@ -924,62 +930,77 @@ function App() {
                     placeholder="Find a conversation…"
                   />
                 </label>
+                <button
+                  className="button primary chats-new-chat"
+                  onClick={openNewChat}
+                >
+                  <Plus size={17} /> New chat
+                </button>
                 <div className="history-list">
-                  {recent
-                    .filter((c) =>
-                      c.name.toLowerCase().includes(query.toLowerCase()),
+                  {history
+                    .filter((item) =>
+                      `${item.title} ${item.character.name}`
+                        .toLowerCase()
+                        .includes(query.toLowerCase()),
                     )
-                    .map((c, i) => (
-                      <div className="history-card" key={c.id}>
-                        <button onClick={() => startChat(c)}>
-                          <Art character={c} className="history-avatar" />
+                    .map((item) => (
+                      <div className="history-card" key={item.id}>
+                        <button onClick={() => openConversation(item.id)}>
+                          <Art
+                            character={item.character}
+                            className="history-avatar"
+                          />
                           <div>
                             <div className="history-title">
-                              <h3>{c.name}</h3>
-                              <small>
-                                {sessions[c.id]
-                                  ? "Saved conversation"
-                                  : "Start a conversation"}
-                              </small>
+                              <h3>{item.character.name}</h3>
+                              <small>{historyDay(item.session.updated)}</small>
                             </div>
-                            <p>
-                              {sessions[c.id]?.messages
-                                .at(-1)
-                                ?.text.replace(/\*/g, "")
-                                .slice(0, 110) || c.tagline}
-                            </p>
-                            <span className="history-tag">{c.tags[0]}</span>
+                            <p>{item.title}</p>
+                            <span className="history-tag">
+                              {item.character.tags[0]}
+                            </span>
                           </div>
                           <ArrowUpRight size={22} />
                         </button>
-                        {sessions[c.id] && (
-                          <button
-                            className="delete-chat icon-button"
-                            aria-label={`Delete conversation with ${c.name}`}
-                            onClick={() => {
-                              setSessions((s) => {
-                                const next = { ...s };
-                                delete next[c.id];
-                                return next;
-                              });
-                              alert("Conversation removed");
-                            }}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
+                        <button
+                          className="delete-chat icon-button"
+                          aria-label={`Delete conversation ${item.title} with ${item.character.name}`}
+                          onClick={() => {
+                            setSessions((prev) => {
+                              const next = { ...prev };
+                              delete next[item.id];
+                              return next;
+                            });
+                            alert("Conversation removed");
+                          }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     ))}
                 </div>
-                {recent.filter((c) =>
-                  c.name.toLowerCase().includes(query.toLowerCase()),
-                ).length === 0 && (
+                {!history.length && (
                   <div className="empty-state">
                     <MessagesSquare size={32} />
-                    <h3>No conversations found</h3>
-                    <p>Try searching for another character.</p>
+                    <h3>Your first story starts here</h3>
+                    <p>Choose a character and begin a conversation.</p>
+                    <button className="button secondary" onClick={openNewChat}>
+                      <Plus size={16} /> New chat
+                    </button>
                   </div>
                 )}
+                {!!history.length &&
+                  !history.some((item) =>
+                    `${item.title} ${item.character.name}`
+                      .toLowerCase()
+                      .includes(query.toLowerCase()),
+                  ) && (
+                    <div className="empty-state">
+                      <Search size={28} />
+                      <h3>No conversations found</h3>
+                      <p>Try another name or a word from your conversation.</p>
+                    </div>
+                  )}
                 <div className="chat-disclaimer">
                   <Feather size={18} />
                   <span>
@@ -1116,6 +1137,19 @@ function App() {
           </button>
         ))}
       </nav>
+      {newChatOpen && (
+        <Modal
+          label="Start a new chat"
+          className="new-chat-modal"
+          onClose={() => setNewChatOpen(false)}
+        >
+          <NewChatPicker
+            characters={characters}
+            Art={Art}
+            onChoose={(character) => startChat(character, { fresh: true })}
+          />
+        </Modal>
+      )}
       {detail && (
         <Modal
           label={`${detail.name} character details`}
@@ -1235,7 +1269,15 @@ function App() {
     </div>
   );
 }
-function Chat({ character, session, setSessions, profile, alert, appearance }) {
+function Chat({
+  character,
+  session,
+  sessionId,
+  setSessions,
+  profile,
+  alert,
+  appearance,
+}) {
   const [text, setText] = useState(""),
     [typing, setTyping] = useState(false),
     [attachment, setAttachment] = useState(null);
@@ -1253,16 +1295,17 @@ function Chat({ character, session, setSessions, profile, alert, appearance }) {
     setAttachment(null);
     setTyping(false);
     return () => clearTimeout(timer.current);
-  }, [character.id]);
+  }, [character.id, sessionId]);
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, typing]);
   const update = (fn) =>
     setSessions((s) => ({
       ...s,
-      [character.id]: {
-        ...s[character.id],
-        messages: fn(s[character.id]?.messages || messages),
+      [sessionId]: {
+        ...s[sessionId],
+        characterId: character.id,
+        messages: fn(s[sessionId]?.messages || messages),
         updated: Date.now(),
       },
     }));
