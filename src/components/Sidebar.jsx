@@ -20,6 +20,7 @@ export default function Sidebar({
   page,
   history,
   activeChat,
+  currentCharacter,
   profile,
   onNavigate,
   onCreate,
@@ -30,6 +31,7 @@ export default function Sidebar({
     [mobile, setMobile] = useState(
       () => window.matchMedia("(max-width: 760px)").matches,
     );
+  useEffect(() => setQuery(""), [currentCharacter?.id]);
   const ref = useRef(null),
     close = useRef(null);
   useEffect(() => {
@@ -155,7 +157,11 @@ export default function Sidebar({
           </nav>
           <section className="sidebar-history" aria-label="Chat history">
             <div className="sidebar-history-heading">
-              <span>CHAT HISTORY</span>
+              <span>
+                {currentCharacter
+                  ? `${currentCharacter.name.toUpperCase()} CHATS`
+                  : "CHAT HISTORY"}
+              </span>
               <span>{history.length}</span>
             </div>
             {history.length > 0 && (

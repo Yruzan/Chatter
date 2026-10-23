@@ -10,6 +10,8 @@ import {
   ArrowUpRight,
   ArrowRight,
   ChevronLeft,
+  ChevronRight,
+  Square,
   X,
   Heart,
   MessageCircle,
@@ -39,6 +41,8 @@ import "@fontsource/manrope/latin-800.css";
 import "./styles.css";
 import "./studio.css";
 import "./navigation.css";
+import "./messages.css";
+import { requestReply, messageText, copyText } from "./api";
 import Sidebar from "./components/Sidebar";
 import NewChatPicker from "./components/NewChatPicker";
 import { getHistory, historyDay } from "./conversations";
@@ -295,6 +299,11 @@ function App() {
         ? update({ ...defaultParameters, ...prev })
         : update,
     );
+  const [liveEnabled, setLiveEnabled] = useState(false);
+  const [models, setModels] = useState([]);
+  useEffect(() => {
+    setModels([]);
+  }, [api.baseUrl, api.provider, apiKey]);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const characters = [...initialCharacters, ...custom];
   const history = getHistory(sessions, characters);
@@ -372,6 +381,10 @@ function App() {
     openConversation(id);
   };
   const openNewChat = () => {
+    if (current) {
+      startChat(current, { fresh: true });
+      return;
+    }
     setSidebarOpen(false);
     setSettings(false);
     setDetail(null);
@@ -449,7 +462,12 @@ function App() {
         open={sidebarOpen}
         onClose={closeSidebar}
         page={page}
-        history={history}
+        history={
+          current
+            ? history.filter((item) => item.character.id === current.id)
+            : history
+        }
+        currentCharacter={current}
         activeChat={activeChat}
         profile={profile}
         onNavigate={navigate}
@@ -583,6 +601,10 @@ function App() {
                 profile={profile}
                 alert={alert}
                 appearance={appearance}
+                api={api}
+                apiKey={apiKey}
+                parameters={parameters}
+                liveEnabled={liveEnabled}
               />
             </section>
             {settings && (
@@ -595,6 +617,10 @@ function App() {
                 setApi={setApi}
                 apiKey={apiKey}
                 setApiKey={setApiKey}
+                liveEnabled={liveEnabled}
+                setLiveEnabled={setLiveEnabled}
+                models={models}
+                setModels={setModels}
                 character={current}
                 onClose={() => setSettings(false)}
                 onReset={() => {
@@ -1277,12 +1303,20 @@ function Chat({
   profile,
   alert,
   appearance,
+  api,
+  apiKey,
+  parameters,
+  liveEnabled,
 }) {
   const [text, setText] = useState(""),
     [typing, setTyping] = useState(false),
-    [attachment, setAttachment] = useState(null);
+    [attachment, setAttachment] = useState(null),
+    [editing, setEditing] = useState(null),
+    [editText, setEditText] = useState(""),
+    [error, setError] = useState("");
   const end = useRef(null),
-    timer = useRef(null),
+    request = useRef(null),
+    mounted = useRef(true),
     fileRef = useRef(null);
   const messages = session?.messages || [
     {
@@ -1294,7 +1328,11 @@ function Chat({
     setText("");
     setAttachment(null);
     setTyping(false);
-    return () => clearTimeout(timer.current);
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      request.current?.abort();
+    };
   }, [character.id, sessionId]);
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -1318,30 +1356,124 @@ function Chat({
       return "*A gentle breeze moves through the space between you.*\n\n“This place has a way of bringing people exactly where they need to be.” A thoughtful pause. “What do you think brought you here?”";
     return `*${character.name} listens, giving your words a moment to settle.*\n\n“${message.length < 70 ? message.replace(/[.!?]$/, "") + "…" : "There’s a story behind that, isn’t there?"}” A warm smile. “Tell me a little more. We have all the time in the world.”`;
   };
+  const generate = async (history, target = null) => {
+    if (request.current || editing !== null) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setTyping(true);
+    setError("");
+    try {
+      let generated;
+      if (liveEnabled) {
+        generated = await requestReply(
+          api,
+          apiKey,
+          parameters,
+          character,
+          profile,
+          history,
+          controller.signal,
+        );
+      } else {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 700);
+          controller.signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              reject(new DOMException("Stopped", "AbortError"));
+            },
+            { once: true },
+          );
+        });
+        const previous = [...history].reverse().find((m) => m.role === "user");
+        const count =
+          target === null ? 0 : messages[target].variants?.length || 1;
+        generated =
+          target === null
+            ? reply(messageText(previous || {}))
+            : count % 2
+              ? `*${character.name} tilts their head, thinking for a moment.*\n\n“There’s more than one way this story could go. What if we take the unexpected path?”`
+              : `*${character.name} offers a reassuring smile.*\n\n“Then let’s begin somewhere new. What would you like to discover together?”`;
+      }
+      if (!mounted.current || controller.signal.aborted) return;
+      update((m) =>
+        target === null
+          ? [...m, { role: "assistant", text: generated }]
+          : m.map((item, index) => {
+              if (index !== target) return item;
+              const variants = [...(item.variants || [item.text]), generated];
+              return {
+                ...item,
+                variants,
+                selectedVariant: variants.length - 1,
+                text: generated,
+              };
+            }),
+      );
+    } catch (err) {
+      if (mounted.current)
+        setError(
+          err.name === "AbortError"
+            ? "Generation stopped. Your messages are saved."
+            : err.message,
+        );
+    } finally {
+      if (mounted.current) setTyping(false);
+      if (request.current === controller) request.current = null;
+    }
+  };
   const send = (e) => {
     e.preventDefault();
-    if ((!text.trim() && !attachment) || typing) return;
-    const message = text.trim() || "Look at this image.";
-    update((m) => [...m, { role: "user", text: message, image: attachment }]);
+    if ((!text.trim() && !attachment) || request.current || editing !== null)
+      return;
+    const message = {
+      role: "user",
+      text: text.trim() || "Look at this image.",
+      image: attachment,
+    };
+    const history = [...messages, message];
+    update(() => history);
     setText("");
     setAttachment(null);
-    setTyping(true);
-    timer.current = setTimeout(() => {
-      update((m) => [...m, { role: "assistant", text: reply(message) }]);
-      setTyping(false);
-    }, 1000);
+    generate(history);
   };
   const regenerate = () => {
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    if (!lastUser) return;
-    update((m) => [
-      ...m.slice(0, -1),
-      {
-        role: "assistant",
-        text: `*${character.name} tilts their head, thinking for a moment.*\n\n“There’s more than one way this story could go. What if we take the unexpected path?”`,
-      },
-    ]);
-    alert("A different turn in the story.");
+    if (
+      messages.at(-1)?.role !== "assistant" ||
+      !messages.some((m) => m.role === "user")
+    )
+      return;
+    generate(messages.slice(0, -1), messages.length - 1);
+  };
+  const pickVariant = (index, selectedVariant) =>
+    update((m) =>
+      m.map((item, i) =>
+        i === index
+          ? { ...item, selectedVariant, text: item.variants[selectedVariant] }
+          : item,
+      ),
+    );
+  const saveEdit = () => {
+    if (!editText.trim()) return;
+    update((m) =>
+      m.map((item, i) =>
+        i === editing
+          ? {
+              ...item,
+              text: editText,
+              ...(item.variants
+                ? {
+                    variants: item.variants.map((v, n) =>
+                      n === (item.selectedVariant || 0) ? editText : v,
+                    ),
+                  }
+                : {}),
+            }
+          : item,
+      ),
+    );
+    setEditing(null);
   };
   return (
     <>
@@ -1385,39 +1517,121 @@ function Chat({
                       alt="Your attachment"
                     />
                   )}
-                  <FormattedMessage
-                    text={m.text}
-                    showMarkers={appearance.showMarkers}
-                  />
+                  {editing === i ? (
+                    <div className="message-editor">
+                      <textarea
+                        aria-label="Edit message text"
+                        autoFocus
+                        rows={5}
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            setEditing(null);
+                          }
+                        }}
+                      />
+                      <div>
+                        <button
+                          className="button secondary"
+                          onClick={() => setEditing(null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="button primary"
+                          disabled={!editText.trim()}
+                          onClick={saveEdit}
+                        >
+                          Save message
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <FormattedMessage
+                      text={messageText(m)}
+                      showMarkers={appearance.showMarkers}
+                    />
+                  )}
                 </div>
-                {m.role === "assistant" && (
-                  <div className="message-tools">
-                    <button
-                      onClick={() => {
-                        navigator.clipboard
-                          ?.writeText(m.text)
-                          .then(() => alert("Message copied"))
-                          .catch(() => alert("Clipboard unavailable"));
-                      }}
-                      aria-label="Copy message"
-                    >
-                      <Copy size={13} />
-                    </button>
-                    {i === messages.length - 1 && messages.length > 1 && (
+                <div className="message-tools">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await copyText(messageText(m));
+                        alert("Message copied");
+                      } catch (err) {
+                        alert(err.message);
+                      }
+                    }}
+                    aria-label="Copy message"
+                    title="Copy message"
+                  >
+                    <Copy size={14} />
+                  </button>
+                  <button
+                    aria-label={
+                      m.role === "user"
+                        ? "Edit your message"
+                        : "Edit character message"
+                    }
+                    title="Edit message"
+                    disabled={typing || editing !== null}
+                    onClick={() => {
+                      setEditing(i);
+                      setEditText(messageText(m));
+                    }}
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  {m.role === "assistant" &&
+                    i === messages.length - 1 &&
+                    messages.some((item) => item.role === "user") && (
                       <button
                         aria-label="Regenerate reply"
+                        title="Generate another reply"
+                        disabled={typing || editing !== null}
                         onClick={regenerate}
                       >
-                        <RefreshCw size={13} />
+                        <RefreshCw size={14} />
                       </button>
                     )}
-                    <span>
-                      {i === 0
-                        ? "The story begins"
-                        : `${i + 1} / ${messages.length}`}
-                    </span>
-                  </div>
-                )}
+                  {m.role === "assistant" && m.variants?.length > 1 && (
+                    <div
+                      className="reply-variants"
+                      role="group"
+                      aria-label="Reply versions"
+                    >
+                      <button
+                        aria-label="Previous reply"
+                        disabled={
+                          typing || editing !== null || !m.selectedVariant
+                        }
+                        onClick={() => pickVariant(i, m.selectedVariant - 1)}
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <span aria-live="polite">
+                        {(m.selectedVariant || 0) + 1} / {m.variants.length}
+                      </span>
+                      <button
+                        aria-label="Next reply"
+                        disabled={
+                          typing ||
+                          editing !== null ||
+                          (m.selectedVariant || 0) >= m.variants.length - 1
+                        }
+                        onClick={() =>
+                          pickVariant(i, (m.selectedVariant || 0) + 1)
+                        }
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  )}
+                  {i === 0 && !m.variants && <span>The story begins</span>}
+                </div>
               </div>
             </div>
           ))}
@@ -1436,6 +1650,29 @@ function Chat({
         </div>
       </div>
       <div className="composer-container">
+        {error && (
+          <div className="generation-error" role="alert">
+            <span>{error}</span>
+            <button
+              className="text-button"
+              disabled={typing || editing !== null}
+              onClick={() =>
+                messages.at(-1)?.role === "user"
+                  ? generate(messages)
+                  : regenerate()
+              }
+            >
+              Retry reply
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Dismiss generation error"
+              onClick={() => setError("")}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
         {attachment && (
           <div className="attachment-preview">
             <img src={attachment} alt="Selected attachment" />
@@ -1489,18 +1726,31 @@ function Chat({
               }
             }}
           />
-          <button
-            className="send-button"
-            type="submit"
-            aria-label="Send message"
-            disabled={typing || (!text.trim() && !attachment)}
-          >
-            <ArrowUpRight size={22} />
-          </button>
+          {typing ? (
+            <button
+              type="button"
+              className="send-button"
+              aria-label="Stop generating"
+              onClick={() => request.current?.abort()}
+            >
+              <Square size={17} />
+            </button>
+          ) : (
+            <button
+              className="send-button"
+              type="submit"
+              aria-label="Send message"
+              disabled={editing !== null || (!text.trim() && !attachment)}
+            >
+              <ArrowUpRight size={22} />
+            </button>
+          )}
         </form>
         <p className="composer-note">
-          <Sparkles size={11} /> A little imagination, a demo reply. Characters
-          aren’t real people.
+          <Sparkles size={11} />{" "}
+          {liveEnabled
+            ? `Live AI · ${api.model}. AI can make mistakes.`
+            : "Demo replies · no API requests. Characters aren’t real people."}
         </p>
       </div>
     </>

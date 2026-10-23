@@ -227,12 +227,12 @@ test("sidebar shows real history and new chats preserve earlier conversations", 
     }),
   ).toBeVisible();
   await sidebar.getByRole("button", { name: "New chat", exact: true }).click();
-  await page
-    .getByRole("button", {
-      name: "Start a new chat with Seraphine",
+  await expect(
+    page.getByRole("textbox", {
+      name: "Search characters for a new chat",
       exact: true,
-    })
-    .click();
+    }),
+  ).toHaveCount(0);
   await expect(page.locator(".message.user")).toHaveCount(0);
   await page
     .getByRole("textbox", { name: "Message", exact: true })

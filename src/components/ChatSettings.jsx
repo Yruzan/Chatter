@@ -13,6 +13,7 @@ import {
   Sparkles,
   ChevronDown,
 } from "lucide-react";
+import { apiBase, loadModels, requestReply } from "../api";
 import FormattedMessage from "./FormattedMessage";
 import {
   defaultParameters,
@@ -96,13 +97,26 @@ export default function ChatSettings({
   setApi,
   apiKey,
   setApiKey,
+  liveEnabled,
+  setLiveEnabled,
+  models,
+  setModels,
   character,
   onClose,
   onReset,
 }) {
   const [tab, setTab] = useState("Parameters"),
     [showKey, setShowKey] = useState(false),
-    [validation, setValidation] = useState(null);
+    [validation, setValidation] = useState(null),
+    [manualModel, setManualModel] = useState(false),
+    [busy, setBusy] = useState("");
+  const operation = useRef(null);
+  useEffect(() => {
+    setManualModel(false);
+    setValidation(null);
+    setBusy("");
+    return () => operation.current?.abort();
+  }, [api.baseUrl, api.provider, apiKey]);
   const ref = useRef(null),
     closeRef = useRef(null);
   useEffect(() => {
@@ -149,6 +163,7 @@ export default function ChatSettings({
     }));
   const look = (key, value) => setAppearance((a) => ({ ...a, [key]: value }));
   const connection = (key, value) => {
+    setLiveEnabled(false);
     setApi((a) => ({ ...a, [key]: value }));
     setValidation(null);
   };
@@ -162,29 +177,18 @@ export default function ChatSettings({
       ollama: { baseUrl: "http://localhost:11434/v1", model: "llama3.2" },
       custom: { baseUrl: "", model: "" },
     }[provider];
+    setLiveEnabled(false);
     setApi({ ...preset, provider });
     setApiKey("");
     setValidation(null);
   };
   function validate() {
     try {
-      const url = new URL(api.baseUrl);
-      if (
-        url.protocol !== "https:" &&
-        !(
-          url.protocol === "http:" &&
-          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-        )
-      )
-        throw new Error("Use an HTTPS endpoint, or HTTP for a local provider.");
-      if (url.username || url.password || url.search || url.hash)
-        throw new Error(
-          "Use a base URL without credentials, query parameters, or fragments.",
-        );
+      apiBase(api.baseUrl);
       if (!api.model.trim()) throw new Error("Enter a model ID.");
       setValidation({
         ok: true,
-        text: "Configuration format is valid. No API request was sent; this preview still uses demo replies.",
+        text: "Configuration format is valid. No API request was sent. Use Test connection to contact your provider.",
       });
     } catch (error) {
       setValidation({
@@ -194,6 +198,54 @@ export default function ChatSettings({
             ? "Enter a complete API base URL."
             : error.message,
       });
+    }
+  }
+  async function contact(kind) {
+    if (operation.current && !operation.current.signal.aborted) return;
+    const controller = new AbortController();
+    operation.current = controller;
+    setBusy(kind);
+    setValidation(null);
+    try {
+      if (kind === "models") {
+        const found = await loadModels(api, apiKey, controller.signal);
+        if (controller.signal.aborted) return;
+        setModels(found);
+        setManualModel(false);
+        if (!found.includes(api.model)) {
+          connection("model", found[0]);
+        }
+        setValidation({
+          ok: true,
+          text: `${found.length} models loaded from your API. Select one below.`,
+        });
+      } else {
+        const answer = await requestReply(
+          api,
+          apiKey,
+          {
+            ...defaultParameters,
+            prompt: "Reply briefly.",
+            maxTokens: 32,
+            temperature: 0,
+          },
+          { name: "Assistant" },
+          { name: "User" },
+          [{ role: "user", text: "Reply with: Connection successful" }],
+          controller.signal,
+        );
+        if (!controller.signal.aborted)
+          setValidation({
+            ok: true,
+            text: `Live request succeeded: ${answer.slice(0, 180)}`,
+          });
+      }
+    } catch (error) {
+      if (!controller.signal.aborted)
+        setValidation({ ok: false, text: error.message });
+    } finally {
+      if (!controller.signal.aborted) setBusy("");
+      if (operation.current === controller) operation.current = null;
     }
   }
   return (
@@ -401,7 +453,7 @@ export default function ChatSettings({
               />
               <Toggle
                 label="Include conversation history"
-                hint="Send previous turns when live AI is connected"
+                hint="Send previous turns, within your context budget"
                 checked={parameters.memory}
                 onChange={(v) => param("memory", v)}
               />
@@ -433,8 +485,8 @@ export default function ChatSettings({
               <div className="settings-demo-note">
                 <Sparkles size={15} />
                 <p>
-                  Parameters are saved for a future API connection. Replies in
-                  this prototype are scripted.
+                  These settings are included in live API requests. In demo
+                  mode, responses use local scripts.
                 </p>
               </div>
               <button className="text-button danger" onClick={onReset}>
@@ -447,10 +499,20 @@ export default function ChatSettings({
               <div className="api-status">
                 <span className="status-dot" />
                 <div>
-                  <strong>Demo replies are active</strong>
-                  <p>Configure a provider for the next stage.</p>
+                  <strong>
+                    {liveEnabled
+                      ? "Live AI is active"
+                      : "Demo replies are active"}
+                  </strong>
+                  <p>
+                    {liveEnabled
+                      ? `Connected mode · ${api.model}`
+                      : "Configure, load models, and test your provider."}
+                  </p>
                 </div>
-                <span className="small-pill">PREVIEW</span>
+                <span className="small-pill">
+                  {liveEnabled ? "LIVE" : "DEMO"}
+                </span>
               </div>
               <div className="settings-section-title">
                 <div>
@@ -485,18 +547,9 @@ export default function ChatSettings({
               <p className="field-hint">
                 Use the base URL, without /chat/completions.
               </p>
-              <label className="setting-input-label" htmlFor="api-model">
-                Model ID
-              </label>
-              <input
-                id="api-model"
-                autoComplete="off"
-                value={api.model}
-                placeholder="provider/model-name"
-                onChange={(e) => connection("model", e.target.value)}
-              />
               <label className="setting-input-label" htmlFor="api-key">
-                API key <span>Optional in this preview</span>
+                API key{" "}
+                <span>Optional for providers without authentication</span>
               </label>
               <div className="api-key-input">
                 <input
@@ -507,7 +560,10 @@ export default function ChatSettings({
                   type={showKey ? "text" : "password"}
                   value={apiKey}
                   placeholder="Enter a key when you’re ready"
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onChange={(e) => {
+                    setLiveEnabled(false);
+                    setApiKey(e.target.value);
+                  }}
                 />
                 <button
                   className="icon-button"
@@ -521,13 +577,77 @@ export default function ChatSettings({
                 <ShieldCheck size={15} />
                 <p>
                   Keys stay in memory for this visit. They are never saved to
-                  browser storage or sent by this prototype.
+                  browser storage. Model loading, connection tests, and live
+                  chats send your key directly to the API base URL above. Only
+                  use a trusted endpoint.
                 </p>
               </div>
               {apiKey && (
-                <button className="text-button" onClick={() => setApiKey("")}>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setLiveEnabled(false);
+                    setApiKey("");
+                  }}
+                >
                   Clear key from this session
                 </button>
+              )}
+              <div className="model-controls">
+                <button
+                  className="button secondary"
+                  disabled={!!busy}
+                  onClick={() => contact("models")}
+                >
+                  <RefreshCw size={15} />{" "}
+                  {busy === "models" ? "Loading models…" : "Load models"}
+                </button>
+                {models.length > 0 && (
+                  <button
+                    className="text-button"
+                    onClick={() => setManualModel(!manualModel)}
+                  >
+                    {manualModel
+                      ? "Choose from API list"
+                      : "Enter model manually"}
+                  </button>
+                )}
+              </div>
+              <p className="field-hint">
+                Load available models using the endpoint and key above. You can
+                also enter a model ID manually.
+              </p>
+              <label className="setting-input-label" htmlFor="api-model">
+                Model ID
+              </label>
+              {models.length > 0 && !manualModel ? (
+                <select
+                  id="api-model"
+                  className="api-model-select"
+                  value={api.model}
+                  disabled={!!busy}
+                  onChange={(e) => connection("model", e.target.value)}
+                >
+                  {!models.includes(api.model) && (
+                    <option value={api.model}>
+                      {api.model || "Choose a model"}
+                    </option>
+                  )}
+                  {models.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id="api-model"
+                  autoComplete="off"
+                  value={api.model}
+                  placeholder="Load models or enter an ID"
+                  disabled={!!busy}
+                  onChange={(e) => connection("model", e.target.value)}
+                />
               )}
               <button
                 className="button secondary validate-api"
@@ -535,6 +655,37 @@ export default function ChatSettings({
               >
                 <Check size={16} /> Validate configuration
               </button>
+              <button
+                className="button secondary validate-api"
+                disabled={!!busy}
+                onClick={() => contact("test")}
+              >
+                <Cable size={16} />{" "}
+                {busy === "test" ? "Testing connection…" : "Test connection"}
+              </button>
+              <Toggle
+                label="Use live AI"
+                hint="Send new messages and regenerations to this provider. Off after page reload."
+                checked={liveEnabled}
+                onChange={(enabled) => {
+                  if (!enabled) {
+                    setLiveEnabled(false);
+                    return;
+                  }
+                  try {
+                    apiBase(api.baseUrl);
+                    if (!api.model.trim())
+                      throw new Error("Choose or enter a model ID first.");
+                    setLiveEnabled(true);
+                    setValidation({
+                      ok: true,
+                      text: "Live mode enabled. New replies will use your provider.",
+                    });
+                  } catch (error) {
+                    setValidation({ ok: false, text: error.message });
+                  }
+                }}
+              />
               {validation && (
                 <p
                   className={`configuration-result ${validation.ok ? "valid" : "invalid"}`}
@@ -546,9 +697,10 @@ export default function ChatSettings({
               <div className="settings-demo-note">
                 <Cable size={17} />
                 <p>
-                  Validation checks the URL and model fields. A real connection
-                  test and server-side key handling will be part of the API
-                  integration.
+                  Test connection sends a short chat request and may use paid
+                  tokens. Your provider must allow browser requests (CORS). If
+                  model listing is unsupported, enter its model ID manually.
+                  Image attachments need a vision model.
                 </p>
               </div>
             </>
