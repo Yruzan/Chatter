@@ -1,0 +1,16 @@
+# Adjust WorkingDirectory, ExecStart and User to match your VPS installation.
+[Unit]
+Description=Chatter website and provider relay
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/Chatter
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --env-file-if-exists=.env server/index.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -303,7 +303,7 @@ function App() {
   const [models, setModels] = useState([]);
   useEffect(() => {
     setModels([]);
-  }, [api.baseUrl, api.provider, apiKey]);
+  }, [api.baseUrl, api.provider, api.transport, apiKey]);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const characters = [...initialCharacters, ...custom];
   const history = getHistory(sessions, characters);

@@ -24,6 +24,7 @@ async function configure(page) {
   await settings(page);
   await page.getByLabel("Provider", { exact: true }).selectOption("custom");
   await page.getByLabel("API base URL", { exact: true }).fill(base);
+  await page.getByLabel("Connection", { exact: true }).selectOption("direct");
   await page.getByLabel("API key", { exact: true }).fill(fakeKey);
 }
 async function send(page, text) {

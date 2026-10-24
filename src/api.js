@@ -1,4 +1,4 @@
-// Keys are passed only to the endpoint chosen by the user; never persisted.
+// Keys stay in memory. Server mode relays them only to an enabled API base URL.
 export function apiBase(baseUrl) {
   let url;
   try {
@@ -33,22 +33,55 @@ async function apiRequest(api, key, path, { body, signal } = {}) {
     controller.abort();
   }, 60000);
   try {
-    const response = await fetch(`${base}${path}`, {
-      method: body ? "POST" : "GET",
-      headers: {
-        Accept: "application/json",
-        ...(body ? { "Content-Type": "application/json" } : {}),
-        ...(key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {}),
+    const throughServer = api.transport !== "direct";
+    const response = await fetch(
+      throughServer ? `/api/provider${path}` : `${base}${path}`,
+      {
+        method: throughServer || body ? "POST" : "GET",
+        headers: {
+          Accept: "application/json",
+          ...(throughServer || body
+            ? { "Content-Type": "application/json" }
+            : {}),
+          ...(key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {}),
+        },
+        ...(throughServer
+          ? {
+              body: JSON.stringify({
+                baseUrl: base,
+                ...(body ? { payload: body } : {}),
+              }),
+            }
+          : body
+            ? { body: JSON.stringify(body) }
+            : {}),
+        signal: controller.signal,
+        credentials: "omit",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
       },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: controller.signal,
-      credentials: "omit",
-      redirect: "error",
-      referrerPolicy: "no-referrer",
-    });
+    );
+    if (throughServer && response.headers.get("X-Chatter-Relay") !== "1")
+      throw new Error(
+        "Chatter’s server connection is unavailable. This site needs the updated Chatter server; static-only hosting cannot relay API requests.",
+      );
+    if (throughServer && !response.ok) {
+      let detail;
+      try {
+        detail = await response.json();
+      } catch {
+        /* Use the status explanation below. */
+      }
+      if (detail?.error?.type === "chatter_relay_error")
+        throw new Error(detail.error.message);
+    }
     if (!response.ok) {
       const explanations = {
-        401: "Check your API key.",
+        401:
+          new URL(base).hostname === "ai.geraikita.com"
+            ? "Check your GeraiKita key. Free-tier keys use /v1/claude; paid keys use /v1."
+            : "Check your API key.",
+        402: "Provider balance is insufficient. Check your account credits.",
         403: "This key or account cannot access the endpoint.",
         404: "Check the base URL and model ID.",
         429: "Rate limit or quota reached. Try again later.",
@@ -69,7 +102,9 @@ async function apiRequest(api, key, path, { body, signal } = {}) {
     if (signal?.aborted) throw new DOMException("Stopped", "AbortError");
     if (error instanceof TypeError)
       throw new Error(
-        "Cannot reach the API. Check its URL, network, and browser CORS access. HTTPS pages cannot call HTTP providers.",
+        api.transport === "direct"
+          ? "The browser cannot reach this API. It may block browser access (CORS). Switch Connection to Chatter server, or check the URL and network."
+          : "Cannot reach the Chatter server. Check this website’s connection and that its server is running.",
       );
     throw error;
   } finally {
@@ -80,7 +115,7 @@ async function apiRequest(api, key, path, { body, signal } = {}) {
 
 export async function loadModels(api, key, signal) {
   const data = await apiRequest(api, key, "/models", { signal });
-  if (!Array.isArray(data.data))
+  if (!Array.isArray(data?.data))
     throw new Error(
       "This endpoint does not return an OpenAI-compatible model list. Enter a model ID manually.",
     );
@@ -182,7 +217,7 @@ export async function requestReply(
     body,
     signal,
   });
-  const text = data.choices?.[0]?.message?.content;
+  const text = data?.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text.trim())
     throw new Error(
       "The model returned no text. Try a different model or increase the response limit.",

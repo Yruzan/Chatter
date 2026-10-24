@@ -27,6 +27,7 @@ export const defaultAppearance = {
 };
 export const defaultApi = {
   provider: "openai",
+  transport: "server",
   baseUrl: "https://api.openai.com/v1",
   model: "gpt-4.1-mini",
 };

@@ -116,7 +116,7 @@ export default function ChatSettings({
     setValidation(null);
     setBusy("");
     return () => operation.current?.abort();
-  }, [api.baseUrl, api.provider, apiKey]);
+  }, [api.baseUrl, api.provider, api.transport, apiKey]);
   const ref = useRef(null),
     closeRef = useRef(null);
   useEffect(() => {
@@ -175,10 +175,12 @@ export default function ChatSettings({
         model: "openai/gpt-4.1-mini",
       },
       ollama: { baseUrl: "http://localhost:11434/v1", model: "llama3.2" },
+      geraikita: { baseUrl: "https://ai.geraikita.com/v1/claude", model: "" },
+      "geraikita-paid": { baseUrl: "https://ai.geraikita.com/v1", model: "" },
       custom: { baseUrl: "", model: "" },
     }[provider];
     setLiveEnabled(false);
-    setApi({ ...preset, provider });
+    setApi({ ...preset, provider, transport: "server" });
     setApiKey("");
     setValidation(null);
   };
@@ -530,9 +532,27 @@ export default function ChatSettings({
               >
                 <option value="openai">OpenAI</option>
                 <option value="openrouter">OpenRouter</option>
+                <option value="geraikita">GeraiKita (free tier)</option>
+                <option value="geraikita-paid">GeraiKita (paid)</option>
                 <option value="ollama">Ollama (local)</option>
                 <option value="custom">OpenAI-compatible</option>
               </select>
+              <label className="setting-input-label" htmlFor="api-transport">
+                Connection
+              </label>
+              <select
+                id="api-transport"
+                value={api.transport || "server"}
+                onChange={(e) => connection("transport", e.target.value)}
+              >
+                <option value="server">Chatter server (recommended)</option>
+                <option value="direct">Direct from browser</option>
+              </select>
+              <p className="field-hint">
+                {api.transport === "direct"
+                  ? "Requires the provider to permit browser requests (CORS)."
+                  : "Routes requests through this website’s server, avoiding provider CORS restrictions."}
+              </p>
               <label className="setting-input-label" htmlFor="api-base">
                 API base URL
               </label>
@@ -546,6 +566,8 @@ export default function ChatSettings({
               />
               <p className="field-hint">
                 Use the base URL, without /chat/completions.
+                {api.baseUrl.includes("ai.geraikita.com") &&
+                  " GeraiKita free-tier keys use /v1/claude; paid keys use /v1. Keep the route that matches your key."}
               </p>
               <label className="setting-input-label" htmlFor="api-key">
                 API key{" "}
@@ -577,9 +599,11 @@ export default function ChatSettings({
                 <ShieldCheck size={15} />
                 <p>
                   Keys stay in memory for this visit. They are never saved to
-                  browser storage. Model loading, connection tests, and live
-                  chats send your key directly to the API base URL above. Only
-                  use a trusted endpoint.
+                  browser storage.{" "}
+                  {api.transport === "direct"
+                    ? "Requests send the key directly to the API above."
+                    : "This website’s server forwards your key to the API above without saving it."}{" "}
+                  Only use a trusted website and endpoint.
                 </p>
               </div>
               {apiKey && (
@@ -698,9 +722,9 @@ export default function ChatSettings({
                 <Cable size={17} />
                 <p>
                   Test connection sends a short chat request and may use paid
-                  tokens. Your provider must allow browser requests (CORS). If
-                  model listing is unsupported, enter its model ID manually.
-                  Image attachments need a vision model.
+                  tokens. Server connection works with providers that block
+                  browser access. If model listing is unsupported, enter its
+                  model ID manually. Image attachments need a vision model.
                 </p>
               </div>
             </>
