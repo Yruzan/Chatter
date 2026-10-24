@@ -1,3 +1,4 @@
+import { activeLore } from "./characterCards.js";
 // Keys stay in memory. Server mode relays them only to an enabled API base URL.
 export function apiBase(baseUrl) {
   let url;
@@ -150,21 +151,43 @@ export function completionPayload(
 ) {
   if (!api.model.trim())
     throw new Error("Choose or enter a model ID in API settings.");
-  const system = [
-    parameters.prompt,
+  const systemPrompt = fill(parameters.prompt || "", character, profile);
+  const context = [
     `You are ${character.name}. The user's name is ${profile.name}.`,
+    profile.description && `User persona: ${profile.description}`,
+    character.nickname && `Nickname: ${character.nickname}`,
     character.tagline,
     character.description,
     character.personality && `Personality: ${character.personality}`,
     character.scenario && `Scenario: ${character.scenario}`,
+    character.systemPrompt?.replaceAll("{{original}}", parameters.prompt || ""),
+    character.exampleDialogue &&
+      `Example dialogue:\n${character.exampleDialogue}`,
     ...(character.examples || []).map(
       (e) =>
         `Example dialogue:\nUser: ${e.user || ""}\n${character.name}: ${e.character || ""}`,
     ),
+    ...activeLore(character, history),
   ]
     .filter(Boolean)
     .map((text) => fill(text, character, profile))
     .join("\n\n");
+  const preamble = [
+    { role: "system", content: systemPrompt },
+    { role: "system", content: context },
+  ];
+  const tail = [
+    character.postHistoryInstructions?.replaceAll(
+      "{{original}}",
+      parameters.postPrompt || "",
+    ),
+    parameters.postPrompt,
+  ]
+    .filter((text) => text?.trim())
+    .map((text) => ({
+      role: "system",
+      content: fill(text, character, profile),
+    }));
   let turns = (parameters.memory ? history : history.slice(-1)).map((m) => ({
     role: m.role,
     content: m.image
@@ -181,7 +204,7 @@ export function completionPayload(
       ? new TextEncoder().encode(m.content).length + 8
       : new TextEncoder().encode(m.content[0].text).length + 2056;
   const budget = parameters.contextSize - parameters.maxTokens;
-  const systemCost = cost({ content: system });
+  const systemCost = [...preamble, ...tail].reduce((n, m) => n + cost(m), 0);
   while (
     turns.length > 1 &&
     systemCost + turns.reduce((n, m) => n + cost(m), 0) > budget
@@ -189,11 +212,11 @@ export function completionPayload(
     turns.shift();
   if (systemCost + turns.reduce((n, m) => n + cost(m), 0) > budget)
     throw new Error(
-      "The character and latest message exceed the context budget. Increase the context window or shorten the instructions/message.",
+      "The prompts, character and latest message exceed the context budget. Increase the context window or shorten the instructions/message.",
     );
   return {
     model: api.model.trim(),
-    messages: [{ role: "system", content: system }, ...turns],
+    messages: [...preamble, ...turns, ...tail],
     temperature: parameters.temperature,
     top_p: parameters.topP,
     max_tokens: parameters.maxTokens,

@@ -12,7 +12,9 @@ import {
   RotateCcw,
   Eye,
   ChevronRight,
+  Upload,
 } from "lucide-react";
+import { importCharacterCard } from "../characterCards";
 import FormattedMessage from "./FormattedMessage";
 import PortraitUpload from "./PortraitUpload";
 import { appearanceStyle } from "../settings";
@@ -29,6 +31,15 @@ const blank = {
   art: 0,
   portrait: null,
   creatorNotes: "",
+  nickname: "",
+  creator: "",
+  characterVersion: "",
+  systemPrompt: "",
+  postHistoryInstructions: "",
+  exampleDialogue: "",
+  alternateGreetings: [],
+  groupGreetings: [],
+  characterBook: null,
 };
 function valuesFrom(character) {
   return {
@@ -39,6 +50,13 @@ function valuesFrom(character) {
       ? character.examples.map((e) => ({ ...e }))
       : [{ user: "", character: "" }],
     tags: [...(character?.tags ?? [])],
+    alternateGreetingsText: (character?.alternateGreetings || []).join(
+      "\n\n---\n\n",
+    ),
+    groupGreetingsText: (character?.groupGreetings || []).join("\n\n---\n\n"),
+    characterBookText: character?.characterBook
+      ? JSON.stringify(character.characterBook, null, 2)
+      : "",
   };
 }
 function Field({
@@ -102,6 +120,7 @@ export default function CharacterEditor({
   portraits,
   Art,
   appearance,
+  persona,
   onSave,
   onClose,
 }) {
@@ -118,7 +137,10 @@ export default function CharacterEditor({
     [showPreview, setShowPreview] = useState(false),
     [errors, setErrors] = useState({}),
     [draftStatus, setDraftStatus] = useState(""),
-    [portraitBusy, setPortraitBusy] = useState(false);
+    [portraitBusy, setPortraitBusy] = useState(false),
+    [importBusy, setImportBusy] = useState(false),
+    [importStatus, setImportStatus] = useState(null);
+  const importRef = useRef(null);
   const heading = useRef(null),
     saved = useRef(false),
     previewRef = useRef(null),
@@ -203,11 +225,27 @@ export default function CharacterEditor({
   );
   function save(e) {
     e.preventDefault();
-    if (portraitBusy) return;
+    if (portraitBusy || importBusy) return;
     const nextErrors = {};
-    for (const key of ["name", "description", "greeting"])
+    for (const key of ["name"])
       if (!data[key].trim())
         nextErrors[key] = "Please add a little detail here.";
+    let characterBook = null;
+    if (data.characterBookText.trim()) {
+      try {
+        characterBook = JSON.parse(data.characterBookText);
+        if (
+          !characterBook ||
+          typeof characterBook !== "object" ||
+          Array.isArray(characterBook) ||
+          (characterBook.entries && !Array.isArray(characterBook.entries))
+        )
+          throw new Error();
+      } catch {
+        nextErrors.characterBookText =
+          "Enter a valid lorebook JSON object with an entries array.";
+      }
+    }
     data.examples.forEach((example, index) => {
       if (!!example.user.trim() !== !!example.character.trim())
         nextErrors[`example-${index}`] =
@@ -234,6 +272,15 @@ export default function CharacterEditor({
       greeting: data.greeting.trim(),
       creatorNotes: data.creatorNotes.trim(),
       tags: [...data.tags],
+      characterBook,
+      alternateGreetings: data.alternateGreetingsText
+        .split(/^\s*---\s*$/m)
+        .map((s) => s.trim())
+        .filter(Boolean),
+      groupGreetings: data.groupGreetingsText
+        .split(/^\s*---\s*$/m)
+        .map((s) => s.trim())
+        .filter(Boolean),
       examples: data.examples
         .filter((e) => e.user.trim() && e.character.trim())
         .map((e) => ({ user: e.user.trim(), character: e.character.trim() })),
@@ -252,6 +299,7 @@ export default function CharacterEditor({
     ["identity", "01", "Profile", UserRound],
     ["definition", "02", "Personality & world", Feather],
     ["dialogue", "03", "Dialogue", MessagesSquare],
+    ["card", "04", "Card instructions", Feather],
   ];
   return (
     <div className="character-studio">
@@ -286,13 +334,64 @@ export default function CharacterEditor({
             className="button primary"
             form="character-editor-form"
             type="submit"
-            disabled={portraitBusy}
+            disabled={portraitBusy || importBusy}
           >
             <Save size={16} />
             {character && !remix ? "Save changes" : "Save character"}
           </button>
         </div>
       </header>
+      <div className="card-import">
+        <button
+          className="button secondary"
+          type="button"
+          disabled={portraitBusy || importBusy}
+          onClick={() => importRef.current?.click()}
+        >
+          <Upload size={16} />
+          {importBusy ? "Reading card…" : "Import character card"}
+        </button>
+        <input
+          ref={importRef}
+          hidden
+          type="file"
+          accept=".json,.png,application/json,image/png"
+          aria-label="Import character card file"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            setImportBusy(true);
+            setImportStatus(null);
+            try {
+              const imported = await importCharacterCard(file);
+              setData(valuesFrom(imported));
+              setErrors({});
+              setTag("");
+              setImportStatus({
+                ok: true,
+                text: `Imported ${imported.name} (${imported.cardData.spec === "chara_card_v3" ? "V3" : "V2"}). Review the fields, then save. Your library has not changed yet.`,
+              });
+            } catch (error) {
+              setImportStatus({ ok: false, text: error.message });
+            } finally {
+              setImportBusy(false);
+            }
+          }}
+        />
+        <p>
+          Import SillyTavern V2/V3 JSON or PNG cards. This replaces the editor’s
+          current fields; your library changes only when you save.
+        </p>
+      </div>
+      {importStatus && (
+        <p
+          className="card-import-result"
+          role={importStatus.ok ? "status" : "alert"}
+        >
+          {importStatus.text}
+        </p>
+      )}
       <div className="studio-draft-bar">
         <span
           className={draftStatus.startsWith("Storage") ? "storage-warning" : ""}
@@ -364,7 +463,7 @@ export default function CharacterEditor({
                         !data.portrait && data.art === c.art ? "selected" : ""
                       }
                       aria-label={`Select ${c.name} portrait`}
-                      disabled={portraitBusy}
+                      disabled={portraitBusy || importBusy}
                       key={c.id}
                       onClick={() =>
                         setData((d) => ({ ...d, art: c.art, portrait: null }))
@@ -391,7 +490,7 @@ export default function CharacterEditor({
             <Field
               name="name"
               label="Character name"
-              maxLength={40}
+              maxLength={120}
               required
               value={data.name}
               onChange={change}
@@ -495,9 +594,8 @@ export default function CharacterEditor({
             <Field
               name="description"
               label="Description"
-              maxLength={6000}
+              maxLength={100000}
               rows={6}
-              required
               value={data.description}
               onChange={change}
               hint="Appearance, background, relationships, and the details the model should know."
@@ -507,7 +605,7 @@ export default function CharacterEditor({
             <Field
               name="personality"
               label="Personality"
-              maxLength={3000}
+              maxLength={40000}
               rows={5}
               value={data.personality}
               onChange={change}
@@ -517,7 +615,7 @@ export default function CharacterEditor({
             <Field
               name="scenario"
               label="Scenario"
-              maxLength={4000}
+              maxLength={40000}
               rows={4}
               value={data.scenario}
               onChange={change}
@@ -545,9 +643,8 @@ export default function CharacterEditor({
             <Field
               name="greeting"
               label="First message"
-              maxLength={6000}
+              maxLength={100000}
               rows={6}
-              required
               value={data.greeting}
               onChange={change}
               hint={
@@ -592,7 +689,7 @@ export default function CharacterEditor({
                     <textarea
                       id={`example-user-${i}`}
                       aria-label={`Example ${i + 1} user message`}
-                      maxLength={4000}
+                      maxLength={40000}
                       rows={2}
                       value={pair.user}
                       placeholder="Do you ever get lonely up here?"
@@ -604,7 +701,7 @@ export default function CharacterEditor({
                     <textarea
                       id={`example-character-${i}`}
                       aria-label={`Example ${i + 1} character message`}
-                      maxLength={4000}
+                      maxLength={40000}
                       rows={3}
                       value={pair.character}
                       placeholder={
@@ -635,6 +732,24 @@ export default function CharacterEditor({
               </button>
             </div>
             <Field
+              name="exampleDialogue"
+              label="Card example dialogue"
+              rows={6}
+              maxLength={100000}
+              value={data.exampleDialogue}
+              onChange={change}
+              hint="Original mes_example text from imported cards. Preserves {{user}}, {{char}}, and <START> dialogue blocks."
+            />
+            <Field
+              name="alternateGreetingsText"
+              label="Alternate greetings"
+              rows={6}
+              maxLength={100000}
+              value={data.alternateGreetingsText}
+              onChange={change}
+              hint="Separate full greetings with a line containing ---. Choose one when starting a new conversation."
+            />
+            <Field
               name="creatorNotes"
               label="Creator notes"
               maxLength={2000}
@@ -644,6 +759,81 @@ export default function CharacterEditor({
               hint="Personal notes for the editor. These aren’t part of the character’s conversation context."
               placeholder="Inspiration, ideas to explore, or things to come back to."
             />
+          </section>
+          <section className="studio-section" id="studio-card">
+            <div className="studio-section-heading">
+              <span>04</span>
+              <div>
+                <h2>Character card instructions</h2>
+                <p>V2/V3 definitions and additional character context.</p>
+              </div>
+              <Feather size={20} />
+            </div>
+            <Field
+              name="systemPrompt"
+              label="Character system prompt"
+              rows={5}
+              maxLength={100000}
+              value={data.systemPrompt}
+              onChange={change}
+              hint="Added to character context after your global system prompt. {{original}} expands to the global system prompt."
+            />
+            <Field
+              name="postHistoryInstructions"
+              label="Character post-history instructions"
+              rows={5}
+              maxLength={100000}
+              value={data.postHistoryInstructions}
+              onChange={change}
+              hint="Placed after conversation history, before your global post prompt."
+            />
+            <Field
+              name="nickname"
+              label="Nickname"
+              maxLength={300}
+              value={data.nickname}
+              onChange={change}
+              hint="Optional V3 character nickname, included in character context."
+            />
+            <Field
+              name="creator"
+              label="Card creator"
+              maxLength={300}
+              value={data.creator}
+              onChange={change}
+            />
+            <Field
+              name="characterVersion"
+              label="Character version"
+              maxLength={300}
+              value={data.characterVersion}
+              onChange={change}
+            />
+            <Field
+              name="groupGreetingsText"
+              label="Group-only greetings"
+              rows={4}
+              maxLength={100000}
+              value={data.groupGreetingsText}
+              onChange={change}
+              hint="V3 group greetings are preserved. Group chat is not available yet. Separate greetings with a line containing ---."
+            />
+            <Field
+              name="characterBookText"
+              label="Character lorebook JSON"
+              rows={10}
+              maxLength={500000}
+              value={data.characterBookText}
+              onChange={change}
+              error={errors.characterBookText}
+              hint="Keyword, selective secondary-key, and constant entries are included in requests. Other matching extensions are retained in the imported source but are not executed."
+            />
+            {data.cardData && (
+              <p className="editor-field-hint">
+                Imported V2/V3 assets, extensions, and additional source
+                metadata are preserved. External assets are not downloaded.
+              </p>
+            )}
             <div className="studio-form-footer">
               <span>
                 <ShieldNote /> Saved privately in your browser
@@ -651,7 +841,7 @@ export default function CharacterEditor({
               <button
                 type="submit"
                 className="button primary"
-                disabled={portraitBusy}
+                disabled={portraitBusy || importBusy}
               >
                 <Save size={16} />
                 {character && !remix ? "Save changes" : "Save character"}
@@ -710,7 +900,7 @@ export default function CharacterEditor({
                 text={
                   data.greeting
                     .replaceAll("{{char}}", data.name || "Your character")
-                    .replaceAll("{{user}}", "you") ||
+                    .replaceAll("{{user}}", persona?.name || "you") ||
                   '*A new story waits to be written.*\n\n"What shall we make of it?"'
                 }
                 showMarkers={appearance.showMarkers}

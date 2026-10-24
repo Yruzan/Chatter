@@ -13,7 +13,7 @@
 }
 .message-tools button:hover:not(:disabled) {
   color: var(--accent);
-  background: #ffffff0a;
+  background: var(--tone-ffffff0a, #ffffff0a);
 }
 .message-tools button:disabled {
   opacity: 0.3;
@@ -39,10 +39,10 @@
   width: 100%;
   min-height: 130px;
   padding: 12px;
-  border: 1px solid #62856b;
+  border: 1px solid var(--tone-62856b, #62856b);
   border-radius: 10px;
-  background: #101d15;
-  color: #e2eee5;
+  background: var(--tone-101d15, #101d15);
+  color: var(--tone-e2eee5, #e2eee5);
   font: inherit;
   resize: vertical;
   line-height: 1.6;
@@ -69,11 +69,11 @@
   flex-wrap: wrap;
   padding: 10px 14px;
   margin-bottom: 10px;
-  border: 1px solid #78584c;
-  background: #2b221d;
+  border: 1px solid var(--tone-78584c, #78584c);
+  background: var(--tone-2b221d, #2b221d);
   border-radius: 12px;
   font-size: 12px;
-  color: #efc6b3;
+  color: var(--tone-efc6b3, #efc6b3);
 }
 .generation-error > span {
   flex: 1;
@@ -110,7 +110,7 @@
   overflow-wrap: anywhere;
 }
 .reply-variants span {
-  color: #a4c6ad;
+  color: var(--tone-a4c6ad, #a4c6ad);
   margin-left: 0;
 }
 @media (max-width: 760px) {
@@ -118,5 +118,58 @@
   .reply-variants button {
     min-width: 36px;
     min-height: 36px;
+  }
+}
+/* Keep scrolling inside the conversation, never into a second page below it. */
+body:has(.app.in-chat) {
+  overflow: hidden;
+  overscroll-behavior-y: none;
+}
+.app.in-chat {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.in-chat .main-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.in-chat .topbar,
+.conversation-header {
+  flex-shrink: 0;
+}
+.in-chat .chat-layout {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+.conversation,
+.message-scroll {
+  min-height: 0;
+}
+.message-scroll {
+  overscroll-behavior: contain;
+}
+.message:has(+ .chat-scroll-anchor) {
+  margin-bottom: 0;
+}
+.composer-container {
+  flex-shrink: 0;
+  background: var(--bg);
+}
+@media (max-width: 760px) {
+  .app.in-chat {
+    position: fixed;
+    inset: 0;
+    height: var(--chat-viewport-height, 100dvh);
+  }
+  .in-chat .main-shell {
+    margin: 0;
+    padding: 0;
+  }
+  .composer-container {
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
 }

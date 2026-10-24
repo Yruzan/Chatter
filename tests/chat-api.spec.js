@@ -1,3 +1,4 @@
+import { installProviderFixture } from "./provider-fixture";
 import { test, expect } from "@playwright/test";
 const base = "https://chatter-api.example/v1";
 const fakeKey = "test-only-not-a-real-api-key";
@@ -42,6 +43,7 @@ test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) => {
     throw error;
   });
+  await installProviderFixture(page);
   await page.goto("/");
 });
 
@@ -248,7 +250,6 @@ test("loads real endpoint models, tests connection and sends selected model and 
   await expect(page.locator(".configuration-result")).toContainText(
     "Live request succeeded: Connection successful",
   );
-  await page.getByRole("switch", { name: "Use live AI", exact: false }).check();
   await page
     .getByRole("button", { name: "Close settings", exact: true })
     .click();
@@ -268,7 +269,7 @@ test("loads real endpoint models, tests connection and sends selected model and 
     page.locator(".message.assistant").last().locator(".message-bubble"),
   ).toHaveText("Provider reply 1");
   expect(requests[1].model).toBe("story-b");
-  expect(requests[1].messages[0].content).toContain("You are Seraphine");
+  expect(requests[1].messages[1].content).toContain("You are Seraphine");
   expect(requests[1].messages.at(-1)).toEqual({
     role: "user",
     content: "Start a real story",
@@ -297,7 +298,7 @@ test("loads real endpoint models, tests connection and sends selected model and 
   await settings(page);
   await expect(
     page.getByRole("switch", { name: "Use live AI", exact: false }),
-  ).not.toBeChecked();
+  ).toHaveCount(0);
   await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
 });
 
@@ -327,7 +328,6 @@ test("request failures preserve turns, retries work, and cancellation adds no fa
   await page.getByRole("button", { name: "Step into the story" }).click();
   await configure(page);
   await page.getByLabel("Model ID", { exact: true }).fill("story-model");
-  await page.getByRole("switch", { name: "Use live AI", exact: false }).check();
   await page
     .getByRole("button", { name: "Close settings", exact: true })
     .click();

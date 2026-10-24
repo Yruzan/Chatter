@@ -12,8 +12,10 @@ import {
   ShieldCheck,
   Sparkles,
   ChevronDown,
+  UserRound,
 } from "lucide-react";
 import { apiBase, loadModels, requestReply } from "../api";
+import { themePresets } from "../themes";
 import FormattedMessage from "./FormattedMessage";
 import {
   defaultParameters,
@@ -97,8 +99,10 @@ export default function ChatSettings({
   setApi,
   apiKey,
   setApiKey,
-  liveEnabled,
-  setLiveEnabled,
+  persona,
+  setPersona,
+  theme,
+  setTheme,
   models,
   setModels,
   character,
@@ -163,7 +167,6 @@ export default function ChatSettings({
     }));
   const look = (key, value) => setAppearance((a) => ({ ...a, [key]: value }));
   const connection = (key, value) => {
-    setLiveEnabled(false);
     setApi((a) => ({ ...a, [key]: value }));
     setValidation(null);
   };
@@ -179,7 +182,6 @@ export default function ChatSettings({
       "geraikita-paid": { baseUrl: "https://ai.geraikita.com/v1", model: "" },
       custom: { baseUrl: "", model: "" },
     }[provider];
-    setLiveEnabled(false);
     setApi({ ...preset, provider, transport: "server" });
     setApiKey("");
     setValidation(null);
@@ -225,14 +227,12 @@ export default function ChatSettings({
         const answer = await requestReply(
           api,
           apiKey,
+          { ...parameters, maxTokens: Math.min(parameters.maxTokens, 256) },
+          character,
           {
-            ...defaultParameters,
-            prompt: "Reply briefly.",
-            maxTokens: 32,
-            temperature: 0,
+            name: persona.name?.trim() || "User",
+            description: persona.description || "",
           },
-          { name: "Assistant" },
-          { name: "User" },
           [{ role: "user", text: "Reply with: Connection successful" }],
           controller.signal,
         );
@@ -289,6 +289,7 @@ export default function ChatSettings({
             [SlidersHorizontal, "Parameters"],
             [Cable, "API"],
             [Palette, "Appearance"],
+            [UserRound, "Persona"],
           ].map(([Icon, name], i) => (
             <button
               key={name}
@@ -303,13 +304,15 @@ export default function ChatSettings({
                   ["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)
                 ) {
                   e.preventDefault();
-                  const names = ["Parameters", "API", "Appearance"];
+                  const names = ["Parameters", "API", "Appearance", "Persona"];
                   const next =
                     e.key === "Home"
                       ? 0
                       : e.key === "End"
-                        ? 2
-                        : (i + (e.key === "ArrowRight" ? 1 : 2)) % 3;
+                        ? names.length - 1
+                        : (i +
+                            (e.key === "ArrowRight" ? 1 : names.length - 1)) %
+                          names.length;
                   setTab(names[next]);
                   ref.current
                     .querySelector(`#settings-tab-${names[next]}`)
@@ -460,7 +463,7 @@ export default function ChatSettings({
                 onChange={(v) => param("memory", v)}
               />
               <label className="setting-input-label" htmlFor="prompt">
-                System instructions
+                System prompt
               </label>
               <textarea
                 id="prompt"
@@ -470,6 +473,26 @@ export default function ChatSettings({
                 rows={4}
                 onChange={(e) => param("prompt", e.target.value)}
               />
+              <p className="field-hint">
+                The first message in every chat request. Supports {"{{char}}"}{" "}
+                and {"{{user}}"}.
+              </p>
+              <label className="setting-input-label" htmlFor="post-prompt">
+                Post prompt
+              </label>
+              <textarea
+                id="post-prompt"
+                className="settings-textarea"
+                value={parameters.postPrompt || ""}
+                rows={4}
+                maxLength={12000}
+                onChange={(e) => param("postPrompt", e.target.value)}
+                placeholder="Final instructions after the conversation…"
+              />
+              <p className="field-hint">
+                Appended as the final system message in every request, after
+                character instructions and chat history.
+              </p>
               <div className="context-card">
                 <span>Character context</span>
                 <strong>{character.name}</strong>
@@ -484,11 +507,11 @@ export default function ChatSettings({
                     .join(" · ")}
                 </p>
               </div>
-              <div className="settings-demo-note">
+              <div className="settings-info-note">
                 <Sparkles size={15} />
                 <p>
-                  These settings are included in live API requests. In demo
-                  mode, responses use local scripts.
+                  Every reply uses your configured live provider. Parameters and
+                  prompts are included in the request.
                 </p>
               </div>
               <button className="text-button danger" onClick={onReset}>
@@ -501,20 +524,13 @@ export default function ChatSettings({
               <div className="api-status">
                 <span className="status-dot" />
                 <div>
-                  <strong>
-                    {liveEnabled
-                      ? "Live AI is active"
-                      : "Demo replies are active"}
-                  </strong>
+                  <strong>Live API replies</strong>
                   <p>
-                    {liveEnabled
-                      ? `Connected mode · ${api.model}`
-                      : "Configure, load models, and test your provider."}
+                    Configure your provider, load models, and test the
+                    connection.
                   </p>
                 </div>
-                <span className="small-pill">
-                  {liveEnabled ? "LIVE" : "DEMO"}
-                </span>
+                <span className="small-pill">LIVE</span>
               </div>
               <div className="settings-section-title">
                 <div>
@@ -583,7 +599,6 @@ export default function ChatSettings({
                   value={apiKey}
                   placeholder="Enter a key when you’re ready"
                   onChange={(e) => {
-                    setLiveEnabled(false);
                     setApiKey(e.target.value);
                   }}
                 />
@@ -610,7 +625,6 @@ export default function ChatSettings({
                 <button
                   className="text-button"
                   onClick={() => {
-                    setLiveEnabled(false);
                     setApiKey("");
                   }}
                 >
@@ -687,29 +701,6 @@ export default function ChatSettings({
                 <Cable size={16} />{" "}
                 {busy === "test" ? "Testing connection…" : "Test connection"}
               </button>
-              <Toggle
-                label="Use live AI"
-                hint="Send new messages and regenerations to this provider. Off after page reload."
-                checked={liveEnabled}
-                onChange={(enabled) => {
-                  if (!enabled) {
-                    setLiveEnabled(false);
-                    return;
-                  }
-                  try {
-                    apiBase(api.baseUrl);
-                    if (!api.model.trim())
-                      throw new Error("Choose or enter a model ID first.");
-                    setLiveEnabled(true);
-                    setValidation({
-                      ok: true,
-                      text: "Live mode enabled. New replies will use your provider.",
-                    });
-                  } catch (error) {
-                    setValidation({ ok: false, text: error.message });
-                  }
-                }}
-              />
               {validation && (
                 <p
                   className={`configuration-result ${validation.ok ? "valid" : "invalid"}`}
@@ -718,7 +709,7 @@ export default function ChatSettings({
                   {validation.text}
                 </p>
               )}
-              <div className="settings-demo-note">
+              <div className="settings-info-note">
                 <Cable size={17} />
                 <p>
                   Test connection sends a short chat request and may use paid
@@ -729,8 +720,90 @@ export default function ChatSettings({
               </div>
             </>
           )}
+          {tab === "Persona" && (
+            <>
+              <div className="settings-section-title">
+                <div>
+                  <h3>Your role in the story</h3>
+                  <p>
+                    This persona is used for {"{{user}}"}, independently of your
+                    account profile.
+                  </p>
+                </div>
+              </div>
+              <label className="setting-input-label" htmlFor="persona-name">
+                Persona name
+              </label>
+              <input
+                id="persona-name"
+                value={persona.name || ""}
+                maxLength={100}
+                onChange={(e) =>
+                  setPersona((p) => ({ ...p, name: e.target.value }))
+                }
+              />
+              <label
+                className="setting-input-label"
+                htmlFor="persona-description"
+              >
+                Persona description
+              </label>
+              <textarea
+                id="persona-description"
+                className="settings-textarea"
+                rows={8}
+                maxLength={12000}
+                value={persona.description || ""}
+                onChange={(e) =>
+                  setPersona((p) => ({ ...p, description: e.target.value }))
+                }
+                placeholder="Appearance, personality, background—who are you in this story?"
+              />
+              <p className="field-hint">
+                Saved on this device and included in every chat request.
+                Existing message text stays as written.
+              </p>
+            </>
+          )}
           {tab === "Appearance" && (
             <>
+              <div className="settings-section-title">
+                <div>
+                  <h3>Website theme</h3>
+                  <p>One palette for every page, menu, and conversation.</p>
+                </div>
+              </div>
+              <div
+                className="theme-presets"
+                role="group"
+                aria-label="Website theme"
+              >
+                {themePresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    className="theme-preset"
+                    aria-pressed={theme === preset.id}
+                    onClick={() => {
+                      setTheme(preset.id);
+                      setAppearance((a) => ({ ...a, ...preset.chat }));
+                    }}
+                  >
+                    <span
+                      className="theme-swatch"
+                      style={{
+                        background: preset.background,
+                        color: preset.accent,
+                      }}
+                    >
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    <strong>{preset.name}</strong>
+                    <small>{preset.description}</small>
+                  </button>
+                ))}
+              </div>
               <div className="settings-section-title">
                 <div>
                   <h3>Make yourself comfortable</h3>
@@ -740,7 +813,12 @@ export default function ChatSettings({
                   className="icon-button"
                   aria-label="Reset appearance"
                   title="Reset appearance"
-                  onClick={() => setAppearance({ ...defaultAppearance })}
+                  onClick={() =>
+                    setAppearance({
+                      ...defaultAppearance,
+                      ...themePresets.find((p) => p.id === theme)?.chat,
+                    })
+                  }
                 >
                   <RotateCcw size={16} />
                 </button>

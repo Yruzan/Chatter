@@ -107,7 +107,6 @@ test("a provider that blocks browser access works through the real Chatter relay
   await expect(page.locator(".configuration-result")).toContainText(
     "Live request succeeded: Reply from the real HTTP fixture",
   );
-  await page.getByRole("switch", { name: "Use live AI", exact: false }).check();
   await page
     .getByRole("button", { name: "Close settings", exact: true })
     .click();

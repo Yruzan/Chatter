@@ -42,6 +42,8 @@ import "./styles.css";
 import "./studio.css";
 import "./navigation.css";
 import "./messages.css";
+import "./themes.css";
+import { applyTheme } from "./themes";
 import { requestReply, messageText, copyText } from "./api";
 import Sidebar from "./components/Sidebar";
 import NewChatPicker from "./components/NewChatPicker";
@@ -289,7 +291,19 @@ function App() {
       "chatter-appearance",
       defaultAppearance,
     ),
-    [savedApi, setApi] = useSaved("chatter-api", defaultApi);
+    [savedApi, setApi] = useSaved("chatter-api", defaultApi),
+    [persona, setPersona] = useSaved("chatter-persona", {
+      name: profile.name,
+      description: "",
+    }),
+    [theme, setTheme] = useSaved("chatter-theme", "forest");
+  const chatPersona = {
+    name: persona.name?.trim() || profile.name,
+    description: persona.description || "",
+  };
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
   const parameters = { ...defaultParameters, ...preferences };
   const appearance = { ...defaultAppearance, ...savedAppearance };
   const api = { ...defaultApi, ...savedApi };
@@ -299,7 +313,6 @@ function App() {
         ? update({ ...defaultParameters, ...prev })
         : update,
     );
-  const [liveEnabled, setLiveEnabled] = useState(false);
   const [models, setModels] = useState([]);
   useEffect(() => {
     setModels([]);
@@ -308,19 +321,32 @@ function App() {
   const characters = [...initialCharacters, ...custom];
   const history = getHistory(sessions, characters);
   const recentIds = history.map((item) => item.id);
-  const recent = (
-    history.length
-      ? [
-          ...new Map(
-            history.map((item) => [item.character.id, item.character]),
-          ).values(),
-        ]
-      : initialCharacters.slice(0, 3)
-  ).slice(0, 3);
+  const recent = [
+    ...new Map(
+      history.map((item) => [item.character.id, item.character]),
+    ).values(),
+  ].slice(0, 3);
   const currentSession = sessions[activeChat];
   const current = characters.find(
     (c) => c.id === (currentSession?.characterId || activeChat),
   );
+  useEffect(() => {
+    if (!current) return;
+    const viewport = window.visualViewport;
+    const resize = () =>
+      document.documentElement.style.setProperty(
+        "--chat-viewport-height",
+        `${viewport?.height || window.innerHeight}px`,
+      );
+    resize();
+    viewport?.addEventListener("resize", resize);
+    window.addEventListener("resize", resize);
+    return () => {
+      viewport?.removeEventListener("resize", resize);
+      window.removeEventListener("resize", resize);
+      document.documentElement.style.removeProperty("--chat-viewport-height");
+    };
+  }, [current?.id]);
   const alert = (message) => {
     setToast(message);
     setTimeout(() => setToast(""), 3200);
@@ -369,12 +395,18 @@ function App() {
         ...prev,
         [id]: {
           characterId: c.id,
-          messages: [
-            {
-              role: "assistant",
-              text: fillPlaceholders(c.greeting, c, profile),
-            },
-          ],
+          messages: (options.greeting ?? c.greeting)?.trim()
+            ? [
+                {
+                  role: "assistant",
+                  text: fillPlaceholders(
+                    options.greeting ?? c.greeting,
+                    c,
+                    chatPersona,
+                  ),
+                },
+              ]
+            : [],
           updated: Date.now(),
         },
       }));
@@ -414,7 +446,8 @@ function App() {
       id:
         existing?.id ||
         `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      creator: existing?.creator || profile.name.toLowerCase(),
+      creator:
+        data.creator?.trim() || existing?.creator || profile.name.toLowerCase(),
       chats: existing?.chats || "0",
       tags: data.tags.length ? data.tags : ["Original"],
       tagline: data.bio || "A new story is waiting.",
@@ -598,13 +631,12 @@ function App() {
                 session={currentSession}
                 sessionId={activeChat}
                 setSessions={setSessions}
-                profile={profile}
+                profile={chatPersona}
                 alert={alert}
                 appearance={appearance}
                 api={api}
                 apiKey={apiKey}
                 parameters={parameters}
-                liveEnabled={liveEnabled}
               />
             </section>
             {settings && (
@@ -617,8 +649,10 @@ function App() {
                 setApi={setApi}
                 apiKey={apiKey}
                 setApiKey={setApiKey}
-                liveEnabled={liveEnabled}
-                setLiveEnabled={setLiveEnabled}
+                persona={persona}
+                setPersona={setPersona}
+                theme={theme}
+                setTheme={setTheme}
                 models={models}
                 setModels={setModels}
                 character={current}
@@ -629,16 +663,18 @@ function App() {
                     [activeChat]: {
                       characterId: current.id,
                       revision: (s[activeChat]?.revision || 0) + 1,
-                      messages: [
-                        {
-                          role: "assistant",
-                          text: fillPlaceholders(
-                            current.greeting,
-                            current,
-                            profile,
-                          ),
-                        },
-                      ],
+                      messages: current.greeting?.trim()
+                        ? [
+                            {
+                              role: "assistant",
+                              text: fillPlaceholders(
+                                current.greeting,
+                                current,
+                                chatPersona,
+                              ),
+                            },
+                          ]
+                        : [],
                       updated: Date.now(),
                     },
                   }));
@@ -657,6 +693,7 @@ function App() {
                 portraits={initialCharacters}
                 Art={Art}
                 appearance={appearance}
+                persona={chatPersona}
                 onSave={saveCharacter}
                 onClose={closeEditor}
               />
@@ -740,55 +777,53 @@ function App() {
                   <span className="hero-orbit orbit-one" />
                   <span className="hero-orbit orbit-two" />
                 </section>
-                <section className="continue-section">
-                  <div className="section-heading">
-                    <h2>
-                      Right where you left off <span className="heading-dot" />
-                    </h2>
-                    <button
-                      className="text-button"
-                      onClick={() => navigate("Chats")}
-                    >
-                      All chats <ArrowUpRight size={16} />
-                    </button>
-                  </div>
-                  <div className="continue-grid">
-                    {recent.slice(0, 3).map((c, i) => (
+                {recent.length > 0 && (
+                  <section className="continue-section">
+                    <div className="section-heading">
+                      <h2>
+                        Right where you left off{" "}
+                        <span className="heading-dot" />
+                      </h2>
                       <button
-                        className="continue-card"
-                        key={c.id}
-                        onClick={() => startChat(c)}
+                        className="text-button"
+                        onClick={() => navigate("Chats")}
                       >
-                        <Art character={c} className="continue-avatar" />
-                        <div>
-                          <div>
-                            <strong>{c.name}</strong>
-                            <span>
-                              {i === 0
-                                ? "Just now"
-                                : i === 1
-                                  ? "2h ago"
-                                  : "Yesterday"}
-                            </span>
-                          </div>
-                          <p>
-                            {history
-                              .find((item) => item.character.id === c.id)
-                              ?.session.messages.at(-1)
-                              ?.text.replace(/\*/g, "")
-                              .slice(0, 52) ||
-                              [
-                                "“Lost… or looking for something?”",
-                                "“Long night?”",
-                                "“Your usual? I saved you a seat.”",
-                              ][i]}
-                          </p>
-                        </div>
-                        <ArrowUpRight size={18} className="continue-arrow" />
+                        All chats <ArrowUpRight size={16} />
                       </button>
-                    ))}
-                  </div>
-                </section>
+                    </div>
+                    <div className="continue-grid">
+                      {recent.slice(0, 3).map((c, i) => (
+                        <button
+                          className="continue-card"
+                          key={c.id}
+                          onClick={() => startChat(c)}
+                        >
+                          <Art character={c} className="continue-avatar" />
+                          <div>
+                            <div>
+                              <strong>{c.name}</strong>
+                              <span>
+                                {historyDay(
+                                  history.find(
+                                    (item) => item.character.id === c.id,
+                                  )?.session.updated,
+                                )}
+                              </span>
+                            </div>
+                            <p>
+                              {history
+                                .find((item) => item.character.id === c.id)
+                                ?.session.messages.at(-1)
+                                ?.text.replace(/\*/g, "")
+                                .slice(0, 52) || "Start a conversation."}
+                            </p>
+                          </div>
+                          <ArrowUpRight size={18} className="continue-arrow" />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
               </>
             )}
             {(page === "Home" || page === "Library") && (
@@ -1029,10 +1064,7 @@ function App() {
                   )}
                 <div className="chat-disclaimer">
                   <Feather size={18} />
-                  <span>
-                    Your stories stay in this browser. This prototype uses demo
-                    replies.
-                  </span>
+                  <span>Your conversations are saved on this device.</span>
                 </div>
               </>
             )}
@@ -1306,7 +1338,6 @@ function Chat({
   api,
   apiKey,
   parameters,
-  liveEnabled,
 }) {
   const [text, setText] = useState(""),
     [typing, setTyping] = useState(false),
@@ -1347,15 +1378,6 @@ function Chat({
         updated: Date.now(),
       },
     }));
-  const reply = (message) => {
-    if (/hello|hi\b|hey/i.test(message))
-      return `*${character.name} turns toward you, a small smile forming.*\n\n“Hello, ${profile.name}. I’m glad you’re here. Tell me… what kind of story shall we make today?”`;
-    if (/name/i.test(message))
-      return `“${character.name},” *they say, with a curious smile.* “And you? I’d like to remember the name of someone who finds their way here.”`;
-    if (/where|forest|world/i.test(message))
-      return "*A gentle breeze moves through the space between you.*\n\n“This place has a way of bringing people exactly where they need to be.” A thoughtful pause. “What do you think brought you here?”";
-    return `*${character.name} listens, giving your words a moment to settle.*\n\n“${message.length < 70 ? message.replace(/[.!?]$/, "") + "…" : "There’s a story behind that, isn’t there?"}” A warm smile. “Tell me a little more. We have all the time in the world.”`;
-  };
   const generate = async (history, target = null) => {
     if (request.current || editing !== null) return;
     const controller = new AbortController();
@@ -1363,39 +1385,15 @@ function Chat({
     setTyping(true);
     setError("");
     try {
-      let generated;
-      if (liveEnabled) {
-        generated = await requestReply(
-          api,
-          apiKey,
-          parameters,
-          character,
-          profile,
-          history,
-          controller.signal,
-        );
-      } else {
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(resolve, 700);
-          controller.signal.addEventListener(
-            "abort",
-            () => {
-              clearTimeout(timer);
-              reject(new DOMException("Stopped", "AbortError"));
-            },
-            { once: true },
-          );
-        });
-        const previous = [...history].reverse().find((m) => m.role === "user");
-        const count =
-          target === null ? 0 : messages[target].variants?.length || 1;
-        generated =
-          target === null
-            ? reply(messageText(previous || {}))
-            : count % 2
-              ? `*${character.name} tilts their head, thinking for a moment.*\n\n“There’s more than one way this story could go. What if we take the unexpected path?”`
-              : `*${character.name} offers a reassuring smile.*\n\n“Then let’s begin somewhere new. What would you like to discover together?”`;
-      }
+      const generated = await requestReply(
+        api,
+        apiKey,
+        parameters,
+        character,
+        profile,
+        history,
+        controller.signal,
+      );
       if (!mounted.current || controller.signal.aborted) return;
       update((m) =>
         target === null
@@ -1483,6 +1481,52 @@ function Chat({
           <span className="eyebrow">A NEW CHAPTER WITH</span>
           <h2>{character.name}</h2>
           <p>{character.tagline}</p>
+          {character.alternateGreetings?.length > 0 &&
+            messages.length <= 1 &&
+            !messages.some((m) => m.role === "user") && (
+              <label className="greeting-choice">
+                Opening message
+                <select
+                  aria-label="Opening message"
+                  value={(() => {
+                    const index = character.alternateGreetings.findIndex(
+                      (g) =>
+                        fillPlaceholders(g, character, profile) ===
+                        (messages[0]?.text || ""),
+                    );
+                    return index < 0 ? "default" : String(index);
+                  })()}
+                  onChange={(e) => {
+                    const greeting =
+                      e.target.value === "default"
+                        ? character.greeting
+                        : character.alternateGreetings[Number(e.target.value)];
+                    update(() =>
+                      greeting?.trim()
+                        ? [
+                            {
+                              role: "assistant",
+                              text: fillPlaceholders(
+                                greeting,
+                                character,
+                                profile,
+                              ),
+                            },
+                          ]
+                        : [],
+                    );
+                  }}
+                >
+                  <option value="default">Default greeting</option>
+                  {character.alternateGreetings.map((g, i) => (
+                    <option key={i} value={i}>
+                      Greeting {i + 2} ·{" "}
+                      {fillPlaceholders(g, character, profile).slice(0, 45)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           <div className="intro-tags">
             {character.tags.slice(0, 2).map((t) => (
               <span key={t}>{t}</span>
@@ -1646,7 +1690,7 @@ function Chat({
               <small>{character.name} is thinking…</small>
             </div>
           )}
-          <div ref={end} />
+          <div ref={end} className="chat-scroll-anchor" />
         </div>
       </div>
       <div className="composer-container">
@@ -1746,12 +1790,6 @@ function Chat({
             </button>
           )}
         </form>
-        <p className="composer-note">
-          <Sparkles size={11} />{" "}
-          {liveEnabled
-            ? `Live AI · ${api.model}. AI can make mistakes.`
-            : "Demo replies · no API requests. Characters aren’t real people."}
-        </p>
       </div>
     </>
   );

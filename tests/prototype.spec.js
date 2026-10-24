@@ -1,3 +1,4 @@
+import { installProviderFixture } from "./provider-fixture";
 import { test, expect } from "@playwright/test";
 const nav = (page, mobile) =>
   page.getByRole("navigation", {
@@ -8,6 +9,7 @@ test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) => {
     throw error;
   });
+  await installProviderFixture(page);
   await page.goto("/");
 });
 test("responsive navigation, character discovery and details", async ({
@@ -259,7 +261,7 @@ test("API drafts validate honestly and never persist a key", async ({
   await page.getByRole("button", { name: "Step into the story" }).click();
   await page.getByTitle("Chat settings").click();
   await page.getByRole("tab", { name: "API", exact: true }).click();
-  await expect(page.getByText("Demo replies are active")).toBeVisible();
+  await expect(page.getByText("Live API replies")).toBeVisible();
   await page.getByLabel("Provider", { exact: true }).selectOption("custom");
   await page
     .getByLabel("API base URL", { exact: true })
@@ -444,9 +446,9 @@ test("older characters and preferences keep their data when edited", async ({
     .click();
   await page.getByRole("button", { name: "Step into the story" }).click();
   await page.getByTitle("Chat settings").click();
-  await expect(
-    page.getByLabel("System instructions", { exact: true }),
-  ).toHaveValue("Keep my original instructions.");
+  await expect(page.getByLabel("System prompt", { exact: true })).toHaveValue(
+    "Keep my original instructions.",
+  );
   const output = page.getByRole("slider", { name: /Maximum response/ });
   await output.press("End");
   await expect(output).toHaveValue("4096");
@@ -460,9 +462,9 @@ test("older characters and preferences keep their data when edited", async ({
   await page
     .getByRole("button", { name: "Reset generation parameters", exact: true })
     .click();
-  await expect(
-    page.getByLabel("System instructions", { exact: true }),
-  ).toHaveValue("Keep my original instructions.");
+  await expect(page.getByLabel("System prompt", { exact: true })).toHaveValue(
+    "Keep my original instructions.",
+  );
   await expect(
     page.getByRole("slider", { name: /Context window/ }),
   ).toHaveValue("2048");

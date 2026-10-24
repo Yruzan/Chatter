@@ -27,9 +27,9 @@ test("API context includes character definitions, examples, selected variants an
     profile,
     history,
   );
-  expect(payload.messages[0].content).toContain("Mira meets Alex");
-  expect(payload.messages[0].content).toContain("Among the stars");
-  expect(payload.messages[0].content).toContain("An observatory");
+  expect(payload.messages[1].content).toContain("Mira meets Alex");
+  expect(payload.messages[1].content).toContain("Among the stars");
+  expect(payload.messages[1].content).toContain("An observatory");
   expect(payload.messages.at(-2).content).toBe("two");
   expect(payload.messages.at(-1).content[1]).toEqual({
     type: "image_url",
@@ -42,8 +42,8 @@ test("API context includes character definitions, examples, selected variants an
     profile,
     history,
   );
-  expect(withoutHistory.messages).toHaveLength(2);
-  expect(withoutHistory.messages[1].content[0].text).toBe("latest");
+  expect(withoutHistory.messages).toHaveLength(3);
+  expect(withoutHistory.messages[2].content[0].text).toBe("latest");
 });
 test("context limits preserve the latest turn and reject oversized character instructions", () => {
   const history = [

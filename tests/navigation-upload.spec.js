@@ -1,3 +1,4 @@
+import { installProviderFixture } from "./provider-fixture";
 import { test, expect } from "@playwright/test";
 const navigation = (page, mobile) =>
   page.getByRole("navigation", {
@@ -44,6 +45,7 @@ test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) => {
     throw error;
   });
+  await installProviderFixture(page);
   await page.goto("/");
 });
 
