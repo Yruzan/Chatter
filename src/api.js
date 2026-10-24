@@ -1,5 +1,5 @@
 import { activeLore } from "./characterCards.js";
-// Keys stay in memory. Server mode relays them only to an enabled API base URL.
+// Saved browser keys are sent only to the selected API; server mode restricts enabled base URLs.
 export function apiBase(baseUrl) {
   let url;
   try {
@@ -22,17 +22,22 @@ export function apiBase(baseUrl) {
   return url.href.replace(/\/+$/, "");
 }
 
-async function apiRequest(api, key, path, { body, signal } = {}) {
+async function apiRequest(api, key, path, { body, signal, onText } = {}) {
   const base = apiBase(api.baseUrl);
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) controller.abort();
   let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, 60000);
+  let timeout;
+  const heartbeat = () => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 60000);
+  };
+  heartbeat();
   try {
     const throughServer = api.transport !== "direct";
     const response = await fetch(
@@ -92,6 +97,20 @@ async function apiRequest(api, key, path, { body, signal } = {}) {
         `API error ${response.status}. ${explanations[response.status] || "The provider could not complete the request. Try again."}`,
       );
     }
+    if (
+      body?.stream &&
+      response.headers.get("content-type")?.includes("text/event-stream")
+    ) {
+      const text = await readCompletionStream(
+        response.body,
+        (value) => {
+          heartbeat();
+          onText?.(value);
+        },
+        heartbeat,
+      );
+      return { choices: [{ message: { content: text } }] };
+    }
     try {
       return await response.json();
     } catch {
@@ -111,6 +130,84 @@ async function apiRequest(api, key, path, { body, signal } = {}) {
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
+  }
+}
+
+// SSE events may span network chunks, use CRLF, and split a UTF-8 code point.
+export async function readCompletionStream(body, onText, heartbeat = () => {}) {
+  if (!body) throw new Error("The API returned an empty stream.");
+  const reader = body.getReader(),
+    decoder = new TextDecoder();
+  let buffer = "",
+    text = "",
+    bytes = 0,
+    done = false,
+    finished = false,
+    searchFrom = 0;
+  const event = (raw) => {
+    const data = raw
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data) return;
+    if (data.trim() === "[DONE]") {
+      done = true;
+      return;
+    }
+    let chunk;
+    try {
+      chunk = JSON.parse(data);
+    } catch {
+      throw new Error("The provider returned invalid streaming data.");
+    }
+    if (chunk.error)
+      throw new Error(
+        "The provider reported an error while streaming. Retry the reply or disable streaming.",
+      );
+    const choice = chunk.choices?.[0];
+    if (choice?.finish_reason) finished = true;
+    const value = choice?.delta?.content ?? choice?.message?.content ?? "";
+    if (typeof value === "string" && value) {
+      text += value;
+      onText?.(text);
+    }
+  };
+  const process = () => {
+    let separator;
+    const boundary = /\r?\n\r?\n/g;
+    boundary.lastIndex = searchFrom;
+    while (!done && (separator = boundary.exec(buffer))) {
+      event(buffer.slice(0, separator.index));
+      buffer = buffer.slice(separator.index + separator[0].length);
+      boundary.lastIndex = 0;
+    }
+    searchFrom = Math.max(0, buffer.length - 3);
+  };
+  try {
+    while (!done) {
+      const part = await reader.read();
+      if (part.done) {
+        buffer += decoder.decode();
+        process();
+        if (buffer.trim() && !done) event(buffer);
+        break;
+      }
+      heartbeat();
+      bytes += part.value.byteLength;
+      if (bytes > 8 * 1024 * 1024)
+        throw new Error("The streamed reply is too large.");
+      buffer += decoder.decode(part.value, { stream: true });
+      process();
+    }
+    if (!done && !finished)
+      throw new Error(
+        "The reply stream ended early. Partial text was kept; retry to continue.",
+      );
+    return text;
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
 
@@ -205,12 +302,13 @@ export function completionPayload(
       : new TextEncoder().encode(m.content[0].text).length + 2056;
   const budget = parameters.contextSize - parameters.maxTokens;
   const systemCost = [...preamble, ...tail].reduce((n, m) => n + cost(m), 0);
-  while (
-    turns.length > 1 &&
-    systemCost + turns.reduce((n, m) => n + cost(m), 0) > budget
-  )
-    turns.shift();
-  if (systemCost + turns.reduce((n, m) => n + cost(m), 0) > budget)
+  const costs = turns.map(cost);
+  let totalCost = systemCost + costs.reduce((n, value) => n + value, 0),
+    first = 0;
+  while (first < turns.length - 1 && totalCost > budget)
+    totalCost -= costs[first++];
+  turns = turns.slice(first);
+  if (totalCost > budget)
     throw new Error(
       "The prompts, character and latest message exceed the context budget. Increase the context window or shorten the instructions/message.",
     );
@@ -222,7 +320,7 @@ export function completionPayload(
     max_tokens: parameters.maxTokens,
     frequency_penalty: parameters.frequencyPenalty,
     presence_penalty: parameters.presencePenalty,
-    stream: false,
+    stream: !!parameters.streaming,
   };
 }
 
@@ -234,11 +332,13 @@ export async function requestReply(
   profile,
   history,
   signal,
+  onText,
 ) {
   const body = completionPayload(api, parameters, character, profile, history);
   const data = await apiRequest(api, key, "/chat/completions", {
     body,
     signal,
+    onText,
   });
   const text = data?.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text.trim())

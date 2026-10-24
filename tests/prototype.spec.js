@@ -255,7 +255,7 @@ test("appearance changes update real chat formatting and persist", async ({
   ).toHaveCount(0);
 });
 
-test("API drafts validate honestly and never persist a key", async ({
+test("API drafts validate honestly and save keys separately from API configuration", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "Step into the story" }).click();
@@ -276,6 +276,7 @@ test("API drafts validate honestly and never persist a key", async ({
   await page
     .getByLabel("API base URL", { exact: true })
     .fill("https://example.com/v1");
+  await page.getByLabel("API key", { exact: true }).fill(fakeKey);
   await page
     .getByRole("button", { name: "Validate configuration", exact: true })
     .click();
@@ -283,7 +284,12 @@ test("API drafts validate honestly and never persist a key", async ({
     "No API request was sent",
   );
   expect(
-    await page.evaluate(() => Object.values(localStorage).join(" ")),
+    await page.evaluate(() =>
+      Object.entries(localStorage)
+        .filter(([name]) => name !== "chatter-api-keys")
+        .map(([, value]) => value)
+        .join(" "),
+    ),
   ).not.toContain(fakeKey);
   await page.reload();
   await page.getByRole("button", { name: "Step into the story" }).click();
@@ -292,7 +298,9 @@ test("API drafts validate honestly and never persist a key", async ({
   await expect(page.getByLabel("API base URL", { exact: true })).toHaveValue(
     "https://example.com/v1",
   );
-  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue(
+    fakeKey,
+  );
 });
 
 test("character drafts survive navigation and remix preserves original characters", async ({

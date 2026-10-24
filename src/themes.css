@@ -112,3 +112,185 @@ html[data-theme="violet"] .button.primary {
   padding: 10px;
   font-size: 14px;
 }
+.lorebook-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  padding: 22px;
+  display: grid;
+  place-items: center;
+  background: #000b;
+}
+.lorebook-editor {
+  width: min(1100px, 100%);
+  height: min(900px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  color: inherit;
+  box-shadow: 0 24px 90px #0008;
+}
+.lorebook-editor > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.lorebook-editor h2 {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 10px 0 0;
+  font-size: 21px;
+}
+.lorebook-editor form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 20px 24px;
+}
+.lorebook-editor label {
+  display: block;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.lorebook-editor input:not([type="checkbox"]),
+.lorebook-editor textarea {
+  display: block;
+  background: var(--panel);
+  color: inherit;
+  border: 1px solid var(--border);
+  padding: 10px;
+  border-radius: 8px;
+  width: 100%;
+  margin: 7px 0 14px;
+  resize: vertical;
+}
+.lorebook-meta {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 18px;
+}
+.lorebook-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 24px;
+}
+.lorebook-entry {
+  width: 100%;
+  text-align: left;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+}
+.lorebook-entry.selected {
+  border-color: var(--green);
+}
+.lorebook-entry strong,
+.lorebook-entry small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.lorebook-entry small {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 5px;
+}
+.lorebook-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 16px 0;
+}
+.lorebook-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.lorebook-editor input[type="checkbox"] {
+  accent-color: var(--green);
+}
+.lorebook-editor footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+  margin-top: 24px;
+}
+.lorebook-editor footer span {
+  color: var(--muted);
+  font-size: 11px;
+  flex: 1;
+  min-width: 180px;
+}
+.lorebook-empty {
+  text-align: center;
+  padding: 40px 15px;
+  color: var(--muted);
+}
+.lorebook-pages {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.lorebook-launcher {
+  border: 1px solid var(--border);
+  padding: 18px;
+  border-radius: 12px;
+  margin-bottom: 15px;
+}
+.lorebook-launcher h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+.lorebook-launcher p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.lorebook-json {
+  margin-bottom: 20px;
+}
+.lorebook-json summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 12px 0;
+}
+@media (max-width: 760px) {
+  .lorebook-backdrop {
+    padding: 0;
+  }
+  .lorebook-editor {
+    border-radius: 0;
+    width: 100%;
+    height: 100dvh;
+  }
+  .lorebook-editor form,
+  .lorebook-editor > header {
+    padding: 16px;
+  }
+  .lorebook-layout {
+    grid-template-columns: 1fr;
+  }
+  .lorebook-entries {
+    max-height: 230px;
+    overflow: auto;
+    padding: 0 2px 10px;
+  }
+  .lorebook-editor input,
+  .lorebook-editor textarea {
+    font-size: 16px;
+  }
+}

@@ -68,10 +68,15 @@ export function createRelay({ allowedBases } = {}) {
       });
     const controller = new AbortController();
     let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 55000);
+    let timeout;
+    const heartbeat = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 55000);
+    };
+    heartbeat();
     const onClose = () => {
       if (!res.writableEnded) controller.abort();
     };
@@ -132,11 +137,11 @@ export function createRelay({ allowedBases } = {}) {
         (!data.payload ||
           typeof data.payload.model !== "string" ||
           !Array.isArray(data.payload.messages) ||
-          data.payload.stream !== false)
+          typeof data.payload.stream !== "boolean")
       )
         throw fail(
           400,
-          "A model, messages, and non-streaming chat payload are required.",
+          "A model, messages, and a boolean stream flag are required.",
         );
       const hostname = new URL(base).hostname;
       const upstream = await fetch(`${base}${operation}`, {
@@ -171,6 +176,44 @@ export function createRelay({ allowedBases } = {}) {
           error: { type: "provider_error" },
         });
       }
+      if (
+        data.payload?.stream &&
+        upstream.headers.get("content-type")?.includes("text/event-stream")
+      ) {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          "X-Accel-Buffering": "no",
+          "X-Chatter-Relay": "1",
+          "X-Content-Type-Options": "nosniff",
+        });
+        res.flushHeaders();
+        let size = 0;
+        for await (const chunk of upstream.body) {
+          heartbeat();
+          size += chunk.length;
+          if (size > MAX_RESPONSE)
+            throw fail(413, "The streamed reply is too large.");
+          if (!res.write(chunk))
+            await new Promise((resolve, reject) => {
+              const clean = () => {
+                res.off("drain", drained);
+                res.off("close", closed);
+              };
+              const drained = () => {
+                  clean();
+                  resolve();
+                },
+                closed = () => {
+                  clean();
+                  reject(new Error("Client disconnected"));
+                };
+              res.once("drain", drained);
+              res.once("close", closed);
+            });
+        }
+        return res.end();
+      }
       const text = await readLimited(upstream.body, MAX_RESPONSE);
       let result;
       try {
@@ -199,6 +242,12 @@ export function createRelay({ allowedBases } = {}) {
                 ].includes(code)
               ? "The provider's HTTPS certificate could not be verified. Check its certificate and API URL."
               : "The Chatter server cannot reach this provider. Check the API URL and the server's outbound network access.";
+      if (res.headersSent) {
+        res.end(
+          `event: error\ndata: ${JSON.stringify({ error: { message } })}\n\n`,
+        );
+        return;
+      }
       reply(res, error.status || (timedOut ? 504 : 502), {
         error: { type: "chatter_relay_error", message },
       });

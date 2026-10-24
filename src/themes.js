@@ -2,6 +2,21 @@ import { themeColors } from "./themeColors";
 import { defaultAppearance } from "./settings";
 export const themePresets = [
   {
+    id: "black",
+    name: "True black",
+    description: "Pure black · cyan accents",
+    hue: 192,
+    background: "#000000",
+    accent: "#58d9ff",
+    chat: {
+      textColor: "#e9e9e9",
+      actionColor: "#aaaaaa",
+      dialogueColor: "#58d9ff",
+      assistantColor: "#000000",
+      userColor: "#0a0a0a",
+    },
+  },
+  {
     id: "forest",
     name: "Forest",
     description: "Botanical calm",
@@ -78,6 +93,16 @@ function recolor(token, preset) {
   const alpha = hex.length === 8 ? parseInt(hex.slice(6), 16) / 255 : 1;
   const [r, g, b] = rgb;
   const light = (Math.min(...rgb) + Math.max(...rgb)) / 2;
+  if (preset.id === "black") {
+    if (light < 0.15) return `rgb(0 0 0 / ${alpha})`;
+    if (light < 0.45) {
+      const value = Math.round(light * 0.35 * 255);
+      return `rgb(${value} ${value} ${value} / ${alpha})`;
+    }
+    if (g > r * 1.08 && g > b * 1.03) return `hsl(192 85% 72% / ${alpha})`;
+    const value = Math.round(light * 255);
+    return `rgb(${value} ${value} ${value} / ${alpha})`;
+  }
   if (preset.id === "mono")
     return `rgb(${rgb.map(() => Math.round(light * 255)).join(" ")} / ${alpha})`;
   // Keep error/warning hues recognizable; recolor the old botanical surfaces.
@@ -88,7 +113,9 @@ function recolor(token, preset) {
   return `hsl(${preset.hue} ${saturation}% ${adjusted * 100}% / ${alpha})`;
 }
 export function applyTheme(id) {
-  const preset = themePresets.find((t) => t.id === id) || themePresets[0];
+  const preset =
+    themePresets.find((t) => t.id === id) ||
+    themePresets.find((t) => t.id === "forest");
   const root = document.documentElement;
   root.dataset.theme = preset.id;
   for (const token of themeColors) {

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { apiBase, loadModels, requestReply } from "../api";
 import { themePresets } from "../themes";
+import BufferedTextarea from "./BufferedTextarea";
 import FormattedMessage from "./FormattedMessage";
 import {
   defaultParameters,
@@ -183,7 +184,6 @@ export default function ChatSettings({
       custom: { baseUrl: "", model: "" },
     }[provider];
     setApi({ ...preset, provider, transport: "server" });
-    setApiKey("");
     setValidation(null);
   };
   function validate() {
@@ -451,27 +451,51 @@ export default function ChatSettings({
                 name="contextSize"
                 value={parameters.contextSize}
                 min={2048}
-                max={32768}
+                max={Math.max(32768, parameters.contextSize)}
                 step={1024}
                 suffix=" tokens"
                 onChange={(v) => param("contextSize", v)}
               />
+              <label className="setting-input-label" htmlFor="custom-context">
+                Custom context window (tokens)
+              </label>
+              <input
+                id="custom-context"
+                type="number"
+                min={2048}
+                step={1024}
+                value={parameters.contextSize}
+                onChange={(e) => {
+                  const value = Number(e.target.value);
+                  if (Number.isSafeInteger(value) && value >= 2048)
+                    param("contextSize", value);
+                }}
+              />
+              <p className="field-hint">
+                Prompts have no character cap. The request still needs to fit
+                your provider’s context window.
+              </p>
               <Toggle
                 label="Include conversation history"
                 hint="Send previous turns, within your context budget"
                 checked={parameters.memory}
                 onChange={(v) => param("memory", v)}
               />
+              <Toggle
+                label="Stream responses"
+                hint="Show the reply as it arrives. Disable for APIs without streaming support."
+                checked={!!parameters.streaming}
+                onChange={(value) => param("streaming", value)}
+              />
               <label className="setting-input-label" htmlFor="prompt">
                 System prompt
               </label>
-              <textarea
+              <BufferedTextarea
                 id="prompt"
                 className="settings-textarea"
                 value={parameters.prompt}
-                maxLength={6000}
                 rows={4}
-                onChange={(e) => param("prompt", e.target.value)}
+                onCommit={(value) => param("prompt", value)}
               />
               <p className="field-hint">
                 The first message in every chat request. Supports {"{{char}}"}{" "}
@@ -480,13 +504,12 @@ export default function ChatSettings({
               <label className="setting-input-label" htmlFor="post-prompt">
                 Post prompt
               </label>
-              <textarea
+              <BufferedTextarea
                 id="post-prompt"
                 className="settings-textarea"
                 value={parameters.postPrompt || ""}
                 rows={4}
-                maxLength={12000}
-                onChange={(e) => param("postPrompt", e.target.value)}
+                onCommit={(value) => param("postPrompt", value)}
                 placeholder="Final instructions after the conversation…"
               />
               <p className="field-hint">
@@ -613,22 +636,15 @@ export default function ChatSettings({
               <div className="key-privacy">
                 <ShieldCheck size={15} />
                 <p>
-                  Keys stay in memory for this visit. They are never saved to
-                  browser storage.{" "}
-                  {api.transport === "direct"
-                    ? "Requests send the key directly to the API above."
-                    : "This website’s server forwards your key to the API above without saving it."}{" "}
-                  Only use a trusted website and endpoint.
+                  Keys are saved in this browser for each API URL and restored
+                  after refresh. Browser storage is not encrypted; use Clear
+                  saved key on shared devices. Keys are forwarded only to your
+                  selected API.
                 </p>
               </div>
               {apiKey && (
-                <button
-                  className="text-button"
-                  onClick={() => {
-                    setApiKey("");
-                  }}
-                >
-                  Clear key from this session
+                <button className="text-button" onClick={() => setApiKey("")}>
+                  Clear saved key
                 </button>
               )}
               <div className="model-controls">
@@ -748,14 +764,13 @@ export default function ChatSettings({
               >
                 Persona description
               </label>
-              <textarea
+              <BufferedTextarea
                 id="persona-description"
                 className="settings-textarea"
                 rows={8}
-                maxLength={12000}
                 value={persona.description || ""}
-                onChange={(e) =>
-                  setPersona((p) => ({ ...p, description: e.target.value }))
+                onCommit={(value) =>
+                  setPersona((p) => ({ ...p, description: value }))
                 }
                 placeholder="Appearance, personality, background—who are you in this story?"
               />

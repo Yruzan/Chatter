@@ -8,6 +8,7 @@ export const defaultParameters = {
   style: "Balanced",
   prompt:
     "Stay in character. Write expressive, thoughtful responses. Use *asterisks* for actions and quotation marks for spoken dialogue.",
+  streaming: false,
   postPrompt: "",
   memory: true,
 };

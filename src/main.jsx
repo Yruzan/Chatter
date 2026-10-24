@@ -1,4 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  useLayoutEffect,
+  memo,
+} from "react";
 import { createRoot } from "react-dom/client";
 import {
   Home,
@@ -264,7 +272,6 @@ function App() {
     [category, setCategory] = useState("For you"),
     [detail, setDetail] = useState(null),
     [editor, setEditor] = useState(null),
-    [apiKey, setApiKey] = useState(""),
     [activeChat, setActiveChat] = useState(null),
     [settings, setSettings] = useState(false),
     [toast, setToast] = useState(""),
@@ -292,34 +299,62 @@ function App() {
       defaultAppearance,
     ),
     [savedApi, setApi] = useSaved("chatter-api", defaultApi),
+    [apiKeys, setApiKeys] = useSaved("chatter-api-keys", {}),
     [persona, setPersona] = useSaved("chatter-persona", {
       name: profile.name,
       description: "",
     }),
     [theme, setTheme] = useSaved("chatter-theme", "forest");
-  const chatPersona = {
-    name: persona.name?.trim() || profile.name,
-    description: persona.description || "",
-  };
+  const chatPersona = useMemo(
+    () => ({
+      name: persona.name?.trim() || profile.name,
+      description: persona.description || "",
+    }),
+    [persona, profile.name],
+  );
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
-  const parameters = { ...defaultParameters, ...preferences };
-  const appearance = { ...defaultAppearance, ...savedAppearance };
-  const api = { ...defaultApi, ...savedApi };
-  const setParameters = (update) =>
-    setPreferences((prev) =>
-      typeof update === "function"
-        ? update({ ...defaultParameters, ...prev })
-        : update,
-    );
+  const parameters = useMemo(
+    () => ({ ...defaultParameters, ...preferences }),
+    [preferences],
+  );
+  const appearance = useMemo(
+    () => ({ ...defaultAppearance, ...savedAppearance }),
+    [savedAppearance],
+  );
+  const api = useMemo(() => ({ ...defaultApi, ...savedApi }), [savedApi]);
+  const keyScope = api.baseUrl.trim().replace(/\/+$/, "");
+  const apiKey = apiKeys[keyScope] || "";
+  const setApiKey = useCallback(
+    (value) =>
+      setApiKeys((previous) => {
+        const next = { ...previous };
+        if (value) next[keyScope] = value;
+        else delete next[keyScope];
+        return next;
+      }),
+    [keyScope],
+  );
+  const setParameters = useCallback(
+    (update) =>
+      setPreferences((prev) =>
+        typeof update === "function"
+          ? update({ ...defaultParameters, ...prev })
+          : update,
+      ),
+    [],
+  );
   const [models, setModels] = useState([]);
   useEffect(() => {
     setModels([]);
   }, [api.baseUrl, api.provider, api.transport, apiKey]);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
-  const characters = [...initialCharacters, ...custom];
-  const history = getHistory(sessions, characters);
+  const characters = useMemo(() => [...initialCharacters, ...custom], [custom]);
+  const history = useMemo(
+    () => getHistory(sessions, characters),
+    [sessions, characters],
+  );
   const recentIds = history.map((item) => item.id);
   const recent = [
     ...new Map(
@@ -347,10 +382,10 @@ function App() {
       document.documentElement.style.removeProperty("--chat-viewport-height");
     };
   }, [current?.id]);
-  const alert = (message) => {
+  const alert = useCallback((message) => {
     setToast(message);
     setTimeout(() => setToast(""), 3200);
-  };
+  }, []);
   useEffect(() => {
     const listener = () =>
       alert(
@@ -1327,7 +1362,7 @@ function App() {
     </div>
   );
 }
-function Chat({
+const Chat = memo(function Chat({
   character,
   session,
   sessionId,
@@ -1344,11 +1379,19 @@ function Chat({
     [attachment, setAttachment] = useState(null),
     [editing, setEditing] = useState(null),
     [editText, setEditText] = useState(""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [streamText, setStreamText] = useState(""),
+    [range, setRange] = useState(() => {
+      const length = session?.messages?.length || 1;
+      return { start: Math.max(0, length - 5), end: length };
+    });
   const end = useRef(null),
     request = useRef(null),
     mounted = useRef(true),
-    fileRef = useRef(null);
+    fileRef = useRef(null),
+    scrollRef = useRef(null),
+    anchor = useRef(null),
+    scrollLatest = useRef(true);
   const messages = session?.messages || [
     {
       role: "assistant",
@@ -1365,9 +1408,48 @@ function Chat({
       request.current?.abort();
     };
   }, [character.id, sessionId]);
-  useEffect(() => {
-    end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, typing]);
+  useLayoutEffect(() => {
+    if (anchor.current && scrollRef.current) {
+      const node = scrollRef.current.querySelector(
+        `[data-message-index="${anchor.current.index}"]`,
+      );
+      if (node)
+        scrollRef.current.scrollTop +=
+          node.getBoundingClientRect().top - anchor.current.top;
+      anchor.current = null;
+    } else if (scrollLatest.current) {
+      end.current?.scrollIntoView({ block: "end" });
+      scrollLatest.current = false;
+    }
+  }, [range, streamText, typing]);
+  const revealLatest = (length) => {
+    scrollLatest.current = true;
+    setRange({ start: Math.max(0, length - 5), end: length });
+  };
+  const pageHistory = (direction) => {
+    const node = scrollRef.current?.querySelector(
+      ".message[data-message-index]",
+    );
+    if (node)
+      anchor.current = {
+        index: Number(node.dataset.messageIndex),
+        top: node.getBoundingClientRect().top,
+      };
+    setRange((previous) =>
+      direction < 0
+        ? {
+            start: Math.max(0, previous.start - 5),
+            end: Math.min(previous.end, Math.max(0, previous.start - 5) + 20),
+          }
+        : {
+            end: Math.min(messages.length, previous.end + 5),
+            start: Math.max(
+              previous.start,
+              Math.min(messages.length, previous.end + 5) - 20,
+            ),
+          },
+    );
+  };
   const update = (fn) =>
     setSessions((s) => ({
       ...s,
@@ -1384,6 +1466,27 @@ function Chat({
     request.current = controller;
     setTyping(true);
     setError("");
+    setStreamText("");
+    let received = "",
+      paintTimer;
+    const commit = (generated, partial = false) => {
+      update((m) =>
+        target === null
+          ? [...m, { role: "assistant", text: generated, partial }]
+          : m.map((item, index) => {
+              if (index !== target) return item;
+              const variants = [...(item.variants || [item.text]), generated];
+              return {
+                ...item,
+                variants,
+                selectedVariant: variants.length - 1,
+                text: generated,
+                partial,
+              };
+            }),
+      );
+      revealLatest(history.length + 1);
+    };
     try {
       const generated = await requestReply(
         api,
@@ -1393,23 +1496,27 @@ function Chat({
         profile,
         history,
         controller.signal,
+        (value) => {
+          received = value;
+          if (!paintTimer)
+            paintTimer = setTimeout(() => {
+              paintTimer = null;
+              if (!mounted.current) return;
+              const scroll = scrollRef.current;
+              if (
+                scroll &&
+                scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <
+                  120
+              )
+                scrollLatest.current = true;
+              setStreamText(received);
+            }, 80);
+        },
       );
       if (!mounted.current || controller.signal.aborted) return;
-      update((m) =>
-        target === null
-          ? [...m, { role: "assistant", text: generated }]
-          : m.map((item, index) => {
-              if (index !== target) return item;
-              const variants = [...(item.variants || [item.text]), generated];
-              return {
-                ...item,
-                variants,
-                selectedVariant: variants.length - 1,
-                text: generated,
-              };
-            }),
-      );
+      commit(generated);
     } catch (err) {
+      if (mounted.current && received.trim()) commit(received, true);
       if (mounted.current)
         setError(
           err.name === "AbortError"
@@ -1417,7 +1524,11 @@ function Chat({
             : err.message,
         );
     } finally {
-      if (mounted.current) setTyping(false);
+      clearTimeout(paintTimer);
+      if (mounted.current) {
+        setTyping(false);
+        setStreamText("");
+      }
       if (request.current === controller) request.current = null;
     }
   };
@@ -1432,6 +1543,7 @@ function Chat({
     };
     const history = [...messages, message];
     update(() => history);
+    revealLatest(history.length);
     setText("");
     setAttachment(null);
     generate(history);
@@ -1475,7 +1587,7 @@ function Chat({
   };
   return (
     <>
-      <div className="message-scroll">
+      <div className="message-scroll" ref={scrollRef}>
         <div className="chat-intro">
           <Art character={character} className="intro-avatar" />
           <span className="eyebrow">A NEW CHAPTER WITH</span>
@@ -1539,147 +1651,221 @@ function Chat({
           <span />
         </div>
         <div className="messages">
-          {messages.map((m, i) => (
-            <div className={`message ${m.role}`} key={i}>
-              {m.role === "assistant" ? (
-                <Art character={character} className="message-avatar" />
-              ) : (
-                <div className="user-avatar message-avatar">
-                  {profile.name.slice(0, 1)}
-                </div>
-              )}
-              <div className="message-content">
-                <div className="message-name">
-                  {m.role === "assistant" ? character.name : profile.name}
-                  <small>{m.role === "assistant" ? "Character" : "You"}</small>
-                </div>
-                <div className="message-bubble">
-                  {m.image && (
-                    <img
-                      className="message-image"
-                      src={m.image}
-                      alt="Your attachment"
-                    />
-                  )}
-                  {editing === i ? (
-                    <div className="message-editor">
-                      <textarea
-                        aria-label="Edit message text"
-                        autoFocus
-                        rows={5}
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Escape") {
-                            e.preventDefault();
-                            setEditing(null);
-                          }
-                        }}
+          {range.start > 0 && (
+            <div className="history-page-controls">
+              <button
+                className="button secondary"
+                onClick={() => pageHistory(-1)}
+              >
+                Load 5 older messages
+              </button>
+              <span>{range.start} earlier messages</span>
+            </div>
+          )}
+          {messages.slice(range.start, range.end).map((m, offset) => {
+            const i = range.start + offset;
+            return (
+              <div
+                className={`message ${m.role}`}
+                key={i}
+                data-message-index={i}
+              >
+                {m.role === "assistant" ? (
+                  <Art character={character} className="message-avatar" />
+                ) : (
+                  <div className="user-avatar message-avatar">
+                    {profile.name.slice(0, 1)}
+                  </div>
+                )}
+                <div className="message-content">
+                  <div className="message-name">
+                    {m.role === "assistant" ? character.name : profile.name}
+                    <small>
+                      {m.role === "assistant" ? "Character" : "You"}
+                    </small>
+                  </div>
+                  <div className="message-bubble">
+                    {m.image && (
+                      <img
+                        className="message-image"
+                        src={m.image}
+                        alt="Your attachment"
                       />
-                      <div>
+                    )}
+                    {editing === i ? (
+                      <div className="message-editor">
+                        <textarea
+                          aria-label="Edit message text"
+                          autoFocus
+                          rows={5}
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              setEditing(null);
+                            }
+                          }}
+                        />
+                        <div>
+                          <button
+                            className="button secondary"
+                            onClick={() => setEditing(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className="button primary"
+                            disabled={!editText.trim()}
+                            onClick={saveEdit}
+                          >
+                            Save message
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <FormattedMessage
+                        text={messageText(m)}
+                        showMarkers={appearance.showMarkers}
+                      />
+                    )}
+                  </div>
+                  <div className="message-tools">
+                    <button
+                      onClick={async () => {
+                        try {
+                          await copyText(messageText(m));
+                          alert("Message copied");
+                        } catch (err) {
+                          alert(err.message);
+                        }
+                      }}
+                      aria-label="Copy message"
+                      title="Copy message"
+                    >
+                      <Copy size={14} />
+                    </button>
+                    <button
+                      aria-label={
+                        m.role === "user"
+                          ? "Edit your message"
+                          : "Edit character message"
+                      }
+                      title="Edit message"
+                      disabled={typing || editing !== null}
+                      onClick={() => {
+                        setEditing(i);
+                        setEditText(messageText(m));
+                      }}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      aria-label="Delete message"
+                      title="Delete this message"
+                      disabled={typing || editing !== null}
+                      onClick={() => {
+                        update((all) => all.filter((_, index) => index !== i));
+                        setRange((previous) => ({
+                          start: Math.max(
+                            0,
+                            previous.start - (i < previous.start ? 1 : 0),
+                          ),
+                          end: Math.max(
+                            0,
+                            previous.end - (i < previous.end ? 1 : 0),
+                          ),
+                        }));
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                    {m.partial && <span>Partial reply</span>}
+                    {m.role === "assistant" &&
+                      i === messages.length - 1 &&
+                      messages.some((item) => item.role === "user") && (
                         <button
-                          className="button secondary"
-                          onClick={() => setEditing(null)}
+                          aria-label="Regenerate reply"
+                          title="Generate another reply"
+                          disabled={typing || editing !== null}
+                          onClick={regenerate}
                         >
-                          Cancel
+                          <RefreshCw size={14} />
                         </button>
+                      )}
+                    {m.role === "assistant" && m.variants?.length > 1 && (
+                      <div
+                        className="reply-variants"
+                        role="group"
+                        aria-label="Reply versions"
+                      >
                         <button
-                          className="button primary"
-                          disabled={!editText.trim()}
-                          onClick={saveEdit}
+                          aria-label="Previous reply"
+                          disabled={
+                            typing || editing !== null || !m.selectedVariant
+                          }
+                          onClick={() => pickVariant(i, m.selectedVariant - 1)}
                         >
-                          Save message
+                          <ChevronLeft size={16} />
+                        </button>
+                        <span aria-live="polite">
+                          {(m.selectedVariant || 0) + 1} / {m.variants.length}
+                        </span>
+                        <button
+                          aria-label="Next reply"
+                          disabled={
+                            typing ||
+                            editing !== null ||
+                            (m.selectedVariant || 0) >= m.variants.length - 1
+                          }
+                          onClick={() =>
+                            pickVariant(i, (m.selectedVariant || 0) + 1)
+                          }
+                        >
+                          <ChevronRight size={16} />
                         </button>
                       </div>
-                    </div>
-                  ) : (
-                    <FormattedMessage
-                      text={messageText(m)}
-                      showMarkers={appearance.showMarkers}
-                    />
-                  )}
-                </div>
-                <div className="message-tools">
-                  <button
-                    onClick={async () => {
-                      try {
-                        await copyText(messageText(m));
-                        alert("Message copied");
-                      } catch (err) {
-                        alert(err.message);
-                      }
-                    }}
-                    aria-label="Copy message"
-                    title="Copy message"
-                  >
-                    <Copy size={14} />
-                  </button>
-                  <button
-                    aria-label={
-                      m.role === "user"
-                        ? "Edit your message"
-                        : "Edit character message"
-                    }
-                    title="Edit message"
-                    disabled={typing || editing !== null}
-                    onClick={() => {
-                      setEditing(i);
-                      setEditText(messageText(m));
-                    }}
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  {m.role === "assistant" &&
-                    i === messages.length - 1 &&
-                    messages.some((item) => item.role === "user") && (
-                      <button
-                        aria-label="Regenerate reply"
-                        title="Generate another reply"
-                        disabled={typing || editing !== null}
-                        onClick={regenerate}
-                      >
-                        <RefreshCw size={14} />
-                      </button>
                     )}
-                  {m.role === "assistant" && m.variants?.length > 1 && (
-                    <div
-                      className="reply-variants"
-                      role="group"
-                      aria-label="Reply versions"
-                    >
-                      <button
-                        aria-label="Previous reply"
-                        disabled={
-                          typing || editing !== null || !m.selectedVariant
-                        }
-                        onClick={() => pickVariant(i, m.selectedVariant - 1)}
-                      >
-                        <ChevronLeft size={16} />
-                      </button>
-                      <span aria-live="polite">
-                        {(m.selectedVariant || 0) + 1} / {m.variants.length}
-                      </span>
-                      <button
-                        aria-label="Next reply"
-                        disabled={
-                          typing ||
-                          editing !== null ||
-                          (m.selectedVariant || 0) >= m.variants.length - 1
-                        }
-                        onClick={() =>
-                          pickVariant(i, (m.selectedVariant || 0) + 1)
-                        }
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  )}
-                  {i === 0 && !m.variants && <span>The story begins</span>}
+                    {i === 0 && !m.variants && <span>The story begins</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {range.end < messages.length && (
+            <div className="history-page-controls">
+              <button
+                className="button secondary"
+                onClick={() => pageHistory(1)}
+              >
+                Load 5 newer messages
+              </button>
+              <button
+                className="text-button"
+                onClick={() => revealLatest(messages.length)}
+              >
+                Jump to latest
+              </button>
+            </div>
+          )}
+          {typing && streamText && (
+            <div className="message assistant streaming-message">
+              <Art character={character} className="message-avatar" />
+              <div className="message-content">
+                <div className="message-name">
+                  {character.name}
+                  <small>Generating…</small>
+                </div>
+                <div className="message-bubble">
+                  <FormattedMessage
+                    text={streamText}
+                    showMarkers={appearance.showMarkers}
+                  />
                 </div>
               </div>
             </div>
-          ))}
-          {typing && (
+          )}
+          {typing && !streamText && (
             <div className="typing-indicator">
               <Art character={character} className="message-avatar" />
               <span>
@@ -1793,6 +1979,6 @@ function Chat({
       </div>
     </>
   );
-}
+});
 
 createRoot(document.getElementById("root")).render(<App />);

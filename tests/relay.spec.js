@@ -37,6 +37,20 @@ test.beforeAll(async () => {
           }),
         );
       }
+      if (body.stream) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.flushHeaders();
+        res.write('data: {"choices":[{"delta":{"content":"Streaming "}}]}\n\n');
+        const timer = setTimeout(() => {
+          if (res.destroyed) return;
+          res.write(
+            'data: {"choices":[{"delta":{"content":"reply 🌙"},"finish_reason":"stop"}]}\n\n',
+          );
+          res.end("data: [DONE]\n\n");
+        }, 1200);
+        res.on("close", () => clearTimeout(timer));
+        return;
+      }
       return res.end(
         JSON.stringify({
           choices: [
@@ -131,7 +145,12 @@ test("a provider that blocks browser access works through the real Chatter relay
     ),
   ).toBe(true);
   expect(
-    await page.evaluate(() => Object.values(localStorage).join(" ")),
+    await page.evaluate(() =>
+      Object.entries(localStorage)
+        .filter(([name]) => name !== "chatter-api-keys")
+        .map(([, value]) => value)
+        .join(" "),
+    ),
   ).not.toContain(fixtureKey);
 });
 
@@ -209,4 +228,60 @@ test("static-only hosting reports that the Chatter server is missing", async ({
   await expect(page.locator(".configuration-result")).toContainText(
     "static-only hosting cannot relay API requests",
   );
+});
+
+test("the real relay streams before completion and keeps partial text on stop", async ({
+  page,
+}) => {
+  await page.goto(appOrigin);
+  await page.getByRole("button", { name: "Step into the story" }).click();
+  await page.getByTitle("Chat settings").click();
+  await page
+    .getByRole("switch", { name: "Stream responses", exact: false })
+    .check();
+  await page.getByRole("tab", { name: "API", exact: true }).click();
+  await page.getByLabel("Provider", { exact: true }).selectOption("custom");
+  await page.getByLabel("API base URL", { exact: true }).fill(apiBase);
+  await page.getByLabel("Model ID", { exact: true }).fill("stream-fixture");
+  await page.getByLabel("API key", { exact: true }).fill(fixtureKey);
+  await page
+    .getByRole("button", { name: "Close settings", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("Please stream");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(page.locator(".streaming-message")).toContainText("Streaming");
+  await expect(
+    page.getByRole("button", { name: "Stop generating", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".message.assistant").last().locator(".message-bubble"),
+  ).toHaveText("Streaming reply 🌙");
+  expect(calls.at(-1).body.stream).toBe(true);
+  await page
+    .getByRole("button", { name: "Regenerate reply", exact: true })
+    .click();
+  await expect(page.locator(".streaming-message")).toContainText("Streaming");
+  await page
+    .getByRole("button", { name: "Stop generating", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Generation stopped");
+  await expect(page.locator(".message.assistant").last()).toContainText(
+    "Partial reply",
+  );
+  const stored = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("chatter-sessions")).seraphine.messages.at(
+      -1,
+    ),
+  );
+  expect(stored.text).toBe("Streaming ");
+  expect(stored.variants).toContain("Streaming reply 🌙");
+  expect(stored.partial).toBe(true);
+  await page
+    .getByRole("button", { name: "Previous reply", exact: true })
+    .click();
+  await expect(
+    page.locator(".message.assistant").last().locator(".message-bubble"),
+  ).toHaveText("Streaming reply 🌙");
 });

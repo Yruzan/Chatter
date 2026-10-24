@@ -173,3 +173,34 @@ body:has(.app.in-chat) {
     padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
 }
+.history-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 18px 0;
+}
+.history-page-controls span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.expand-message {
+  display: block;
+  margin-top: 14px;
+  white-space: normal;
+  line-height: 1.6;
+  color: var(--green);
+}
+.streaming-message .message-bubble::after {
+  content: " ▍";
+  color: var(--green);
+}
+.message {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+.message:has(.message-editor),
+.streaming-message {
+  content-visibility: visible;
+}

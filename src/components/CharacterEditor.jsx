@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { importCharacterCard } from "../characterCards";
 import FormattedMessage from "./FormattedMessage";
+import LorebookEditor from "./LorebookEditor";
 import PortraitUpload from "./PortraitUpload";
 import { appearanceStyle } from "../settings";
 
@@ -81,7 +82,8 @@ function Field({
           {required && <span aria-hidden="true"> *</span>}
         </label>
         <span>
-          {value.length.toLocaleString()} / {maxLength.toLocaleString()}
+          {value.length.toLocaleString()}
+          {maxLength ? ` / ${maxLength.toLocaleString()}` : " characters"}
         </span>
       </div>
       {hint && (
@@ -139,6 +141,7 @@ export default function CharacterEditor({
     [draftStatus, setDraftStatus] = useState(""),
     [portraitBusy, setPortraitBusy] = useState(false),
     [importBusy, setImportBusy] = useState(false),
+    [lorebookOpen, setLorebookOpen] = useState(false),
     [importStatus, setImportStatus] = useState(null);
   const importRef = useRef(null);
   const heading = useRef(null),
@@ -168,15 +171,39 @@ export default function CharacterEditor({
       previous?.focus();
     };
   }, [showPreview]);
-  useEffect(() => {
+  const latestDraft = useRef(data);
+  latestDraft.current = data;
+  const writeDraft = () => {
     if (saved.current) return;
     try {
-      localStorage.setItem(draftKey, JSON.stringify({ version: 1, data }));
+      localStorage.setItem(
+        draftKey,
+        JSON.stringify({ version: 1, data: latestDraft.current }),
+      );
       setDraftStatus("Draft saved on this device");
     } catch {
       setDraftStatus("Storage full. Keep this editor open until you save.");
     }
+  };
+  useEffect(() => {
+    const timer = setTimeout(writeDraft, 500);
+    return () => clearTimeout(timer);
   }, [data, draftKey]);
+  useEffect(() => {
+    const leave = () => writeDraft();
+    window.addEventListener("pagehide", leave);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      if (!saved.current) {
+        try {
+          localStorage.setItem(
+            draftKey,
+            JSON.stringify({ version: 1, data: latestDraft.current }),
+          );
+        } catch {}
+      }
+    };
+  }, [draftKey]);
   const change = (e) => {
     const { name, value } = e.target;
     setData((d) => ({ ...d, [name]: value }));
@@ -303,6 +330,27 @@ export default function CharacterEditor({
   ];
   return (
     <div className="character-studio">
+      {lorebookOpen && (
+        <LorebookEditor
+          value={
+            data.characterBookText.trim()
+              ? JSON.parse(data.characterBookText)
+              : null
+          }
+          onClose={() => setLorebookOpen(false)}
+          onSave={(book) => {
+            setData((d) => ({
+              ...d,
+              characterBookText: JSON.stringify(book, null, 2),
+            }));
+            setErrors((previous) => ({
+              ...previous,
+              characterBookText: undefined,
+            }));
+            setLorebookOpen(false);
+          }}
+        />
+      )}
       <header className="studio-header">
         <div>
           <button className="text-button studio-back" onClick={onClose}>
@@ -773,7 +821,6 @@ export default function CharacterEditor({
               name="systemPrompt"
               label="Character system prompt"
               rows={5}
-              maxLength={100000}
               value={data.systemPrompt}
               onChange={change}
               hint="Added to character context after your global system prompt. {{original}} expands to the global system prompt."
@@ -782,7 +829,6 @@ export default function CharacterEditor({
               name="postHistoryInstructions"
               label="Character post-history instructions"
               rows={5}
-              maxLength={100000}
               value={data.postHistoryInstructions}
               onChange={change}
               hint="Placed after conversation history, before your global post prompt."
@@ -818,16 +864,57 @@ export default function CharacterEditor({
               onChange={change}
               hint="V3 group greetings are preserved. Group chat is not available yet. Separate greetings with a line containing ---."
             />
-            <Field
-              name="characterBookText"
-              label="Character lorebook JSON"
-              rows={10}
-              maxLength={500000}
-              value={data.characterBookText}
-              onChange={change}
-              error={errors.characterBookText}
-              hint="Keyword, selective secondary-key, and constant entries are included in requests. Other matching extensions are retained in the imported source but are not executed."
-            />
+            <div className="lorebook-launcher">
+              <h3>Character lorebook</h3>
+              <p>
+                Edit entries, keywords, and activation rules in a dedicated
+                editor.
+              </p>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => {
+                  try {
+                    const book = data.characterBookText.trim()
+                      ? JSON.parse(data.characterBookText)
+                      : null;
+                    if (
+                      book &&
+                      (!Array.isArray(book.entries ?? []) ||
+                        (book.entries || []).some(
+                          (e) => !e || typeof e !== "object",
+                        ))
+                    )
+                      throw new Error();
+                    setLorebookOpen(true);
+                  } catch {
+                    setErrors((previous) => ({
+                      ...previous,
+                      characterBookText:
+                        "Fix the source JSON below before opening the editor.",
+                    }));
+                  }
+                }}
+              >
+                Open lorebook editor
+              </button>
+            </div>
+            <details
+              className="lorebook-json"
+              open={!!errors.characterBookText}
+            >
+              <summary>Advanced lorebook JSON</summary>
+              <Field
+                name="characterBookText"
+                label="Character lorebook JSON"
+                rows={10}
+                maxLength={500000}
+                value={data.characterBookText}
+                onChange={change}
+                error={errors.characterBookText}
+                hint="Keyword, selective secondary-key, and constant entries are included in requests. Other matching extensions are retained in the imported source but are not executed."
+              />
+            </details>
             {data.cardData && (
               <p className="editor-field-hint">
                 Imported V2/V3 assets, extensions, and additional source

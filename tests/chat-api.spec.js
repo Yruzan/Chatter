@@ -291,7 +291,12 @@ test("loads real endpoint models, tests connection and sends selected model and 
   await expect(page.locator(".message.assistant")).toHaveCount(3);
   expect(requests[3].messages.at(-2).content).toBe("Provider reply 1");
   expect(
-    await page.evaluate(() => Object.values(localStorage).join(" ")),
+    await page.evaluate(() =>
+      Object.entries(localStorage)
+        .filter(([name]) => name !== "chatter-api-keys")
+        .map(([, value]) => value)
+        .join(" "),
+    ),
   ).not.toContain(fakeKey);
   await page.reload();
   await page.getByRole("button", { name: "Step into the story" }).click();
@@ -299,7 +304,9 @@ test("loads real endpoint models, tests connection and sends selected model and 
   await expect(
     page.getByRole("switch", { name: "Use live AI", exact: false }),
   ).toHaveCount(0);
-  await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("API key", { exact: true })).toHaveValue(
+    fakeKey,
+  );
 });
 
 test("request failures preserve turns, retries work, and cancellation adds no fake reply", async ({

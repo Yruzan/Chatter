@@ -233,6 +233,7 @@ export function activeLore(character, history) {
     .slice(-depth)
     .map((m) => m.text || "")
     .join("\n");
+  const lowerInput = input.toLowerCase();
   return book.entries
     .filter((entry) => {
       if (!entry || typeof entry !== "object") return false;
@@ -243,7 +244,7 @@ export function activeLore(character, history) {
         key.length &&
         (entry.case_sensitive
           ? input.includes(key)
-          : input.toLowerCase().includes(key.toLowerCase()));
+          : lowerInput.includes(key.toLowerCase()));
       return (
         Array.isArray(entry.keys) &&
         entry.keys.some(match) &&

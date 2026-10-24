@@ -199,6 +199,7 @@ test("invalid imports preserve unsaved work and invalid lorebook JSON cannot sav
   await expect(page.getByLabel("Character name", { exact: true })).toHaveValue(
     "Keep my draft",
   );
+  await page.getByText("Advanced lorebook JSON", { exact: true }).click();
   await page
     .getByLabel("Character lorebook JSON", { exact: true })
     .fill("{not json");
